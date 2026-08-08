@@ -1,0 +1,44 @@
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Python caches and virtualenvs
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+venv/
+.venv/
+env/
+ENV/
+
+# Packaging
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# Logs and runtime state
+logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+data/*.db
+data/*.sqlite*
+tmp/
+temp/
+tmp-inspect.db

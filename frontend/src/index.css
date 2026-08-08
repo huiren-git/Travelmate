@@ -1,0 +1,17 @@
+@import 'tailwindcss';
+
+:root {
+  --tm-primary: #0071eb;
+  --tm-primary-2: #1b8cd1;
+  --tm-bg: #f8f9fa;
+  --tm-accent: #ff6f61;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+
+body {
+  margin: 0;
+}

@@ -1,0 +1,79 @@
+# Dependencies
+node_modules/
+
+# Frontend build and cache
+dist/
+dist-ssr/
+build/
+.vite/
+.npm-cache/
+*.tsbuildinfo
+*.local
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Python packaging
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Runtime databases and local state
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+.chroma/
+chroma/
+
+# Temporary files and local exports
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+deepseek_data-*.zip
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor and IDE files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
