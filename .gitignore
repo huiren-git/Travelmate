@@ -62,6 +62,7 @@ chroma/
 # Temporary files and local exports
 tmp/
 temp/
+.worktrees/
 *.tmp
 *.bak
 *.swp
