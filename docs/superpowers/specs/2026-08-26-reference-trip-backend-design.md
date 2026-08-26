@@ -6,7 +6,7 @@
 
 ## 数据模型
 
-在 `db_client.py` 的数据库初始化中创建 `reference_trips` 表。记录保留逻辑蓝图而非原始日期：目的地、原始天数、按顺序的景点名 `sequence`、对应时长 `rhythm`、原始预算、标签、避坑经验、评分和使用次数。
+新建 `services/reference_db.py`，独立管理 `reference.db` 的异步 SQLite 单例连接、WAL/外键设置、关闭逻辑与建表初始化。`reference_trips` 仅创建在该独立数据库中，主业务 SQLite 和既有 `db_client.py` 不承担此表。记录保留逻辑蓝图而非原始日期：目的地、原始天数、按顺序的景点名 `sequence`、对应时长 `rhythm`、原始预算、标签、避坑经验、评分和使用次数。
 
 `sequence_hash` 是 `sequence` 的稳定 SHA-256（UTF-8 JSON、固定分隔符、保持顺序），并与 `destination`、`duration` 组成唯一索引。它代替 SQLite 对 JSON 文本的唯一约束，避免序列化格式不同造成重复。
 
@@ -56,7 +56,8 @@ API 以现有 `node` / `done` / `error` SSE 格式返回；适配过程额外发
 
 ## 模块边界
 
-- `services/reference_trip_service.py`：建表、归档、分页查询、引用加载和使用次数更新。
+- `services/reference_db.py`：创建/关闭 `reference.db` 连接，并初始化 `reference_trips` 表和索引。
+- `services/reference_trip_service.py`：通过 `reference_db.py` 归档、分页查询、引用加载和使用次数更新。
 - `services/reference_adapter.py`：纯规则适配编排、与地图/天气服务交互、日志构造和 State 草稿转换。
 - `api/v1/reference.py`：列表和采纳 SSE 路由，沿用 chat API 的活动运行控制、会话所有权及 SSE 编码。
 - `graph/reference_validator.py`：无 LLM 的轻量校验节点。
