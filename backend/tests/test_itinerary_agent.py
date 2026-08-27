@@ -1163,3 +1163,31 @@ async def test_validator_promotes_initial_drafts_only_after_budget_passes(monkey
     assert result["budget"] == state["draft_budget"]
     assert result["draft_daily_itinerary"] is None
     assert result["draft_budget"] is None
+
+
+@pytest.mark.asyncio
+async def test_validator_archives_confirmed_high_score_trip(monkeypatch):
+    state = _replan_state()
+    state["plan_mode"] = "plan"
+    state["current_mode"] = "plan"
+    state["daily_itinerary"] = None
+    state["draft_daily_itinerary"] = deepcopy(_replan_state()["daily_itinerary"])
+    state["draft_budget"] = {"level": "mid", "total": 1000.0, "detail": {}}
+    state["next_node"] = "budget_agent"
+    archived = []
+
+    async def record_archive(archive_state, trace_id):
+        archived.append((archive_state, trace_id))
+        return True
+
+    async def no_summary(*_args):
+        return None
+
+    monkeypatch.setattr(validator_module, "archive_reference_trip", record_archive)
+    monkeypatch.setattr(validator_module, "_generate_summary_text", no_summary)
+
+    result = await validator_node(state)
+
+    assert result["terminal_status"] == "confirmed"
+    assert len(archived) == 1
+    assert archived[0][0]["daily_itinerary"] == state["draft_daily_itinerary"]

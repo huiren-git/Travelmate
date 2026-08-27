@@ -10,6 +10,7 @@ from src.graph.graph import close_graph_checkpointers, get_graph_async
 from src.models.common import ApiResponse
 from src.models.health import ServiceInfoData
 from src.services.vector_store import init_vector_store, close_vector_store
+from src.services.reference_db import close_reference_db_pool, init_reference_tables
 
 # 初始化日志
 setup_logging()
@@ -19,6 +20,7 @@ logger = get_logger("main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("🔄 初始化应用...")
+    await init_reference_tables()
     # 初始化 LangGraph 图（提前构建，避免首次请求延迟）
     try:
         graph = await get_graph_async()
@@ -40,6 +42,7 @@ async def lifespan(app: FastAPI):
     # 关闭 Redis 连接池
     await close_redis()
     await close_graph_checkpointers()
+    await close_reference_db_pool()
     # 关闭 ChromaDB 连接
     close_vector_store()
     logger.info("✅ 应用已关闭")

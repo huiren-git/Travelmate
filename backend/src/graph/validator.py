@@ -11,6 +11,8 @@ from langgraph.types import interrupt
 from src.handlers.registry import _handler_registry
 from src.handlers.budget_overrun_handler import BudgetOverrunHandler
 from src.graph.state import TravelAgentState
+from src.core.tracing import get_trace_id
+from src.services.reference_trip_service import archive_reference_trip
 from src.utils.llm_utils import call_llm, ensure_dict, extract_json, message_content
 from src.utils.state_utils import (
     get_budget_level,
@@ -652,6 +654,11 @@ async def validator_node(state: TravelAgentState) -> Dict[str, Any]:
         update["budget"] = budget
         update["draft_daily_itinerary"] = None
         update["draft_budget"] = None
+    if terminal_status == "confirmed" and final_score >= 85:
+        try:
+            await archive_reference_trip({**state, **update}, get_trace_id())
+        except Exception:
+            logger.exception("Reference trip archive failed")
     if passed and not auto_retry:
         user_decision_requests = _collect_user_decision_requests({**state, **update})
         if user_decision_requests:
