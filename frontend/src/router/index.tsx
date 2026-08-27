@@ -6,6 +6,7 @@ import { useAppSettingsStore } from '../store/useAppSettingsStore'
 import { resolveTheme } from '../utils/theme'
 import TravelmateDashboardPage from '../pages/ChatPage'
 import HomePage from '../pages/HomePage'
+import ReferenceTripsPage from '../pages/ReferenceTripsPage'
 import HistoryPage from '../pages/HistoryPage'
 import ProfilePage from '../pages/ProfilePage'
 import TraceDetailPage from '../pages/TraceDetailPage'
@@ -44,6 +45,7 @@ export default function AppRouter() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/chat" element={withAppLayout(<TravelmateDashboardPage />)} />
+          <Route path="/reference" element={withAppLayout(<ReferenceTripsPage />)} />
           <Route path="/history" element={withAppLayout(<HistoryPage />)} />
           <Route path="/traces" element={withAppLayout(<TracesPage />)} />
           <Route path="/traces/:id" element={withAppLayout(<TraceDetailPage />)} />

@@ -81,8 +81,10 @@ from src.api.v1 import chat
 from src.api.v1 import preferences
 from src.api.v1 import sessions
 from src.api.v1 import traces
+from src.api.v1 import reference
 app.include_router(health.router, prefix="/api/v1", tags=["系统运维"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI 对话和行程生成"])
 app.include_router(preferences.router, prefix="/api/v1", tags=["用户画像"])
 app.include_router(sessions.router, prefix="/api/v1", tags=["行程管理"])
 app.include_router(traces.router, prefix="/api/v1", tags=["评估系统"])
+app.include_router(reference.router, prefix="/api/v1", tags=["参考行程"])

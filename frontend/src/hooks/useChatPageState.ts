@@ -170,6 +170,21 @@ export function useChatPageState() {
   // 预算超支等人机协同中断：从 done 事件的 tasks 提取，渲染为确认气泡；用户选择后调 /chat/resume 续跑。
   const [pendingInterrupt, setPendingInterrupt] = useState<BudgetInterruptPayload | null>(null)
 
+  useEffect(() => {
+    const raw = sessionStorage.getItem('reference-adoption')
+    if (!raw) return
+    sessionStorage.removeItem('reference-adoption')
+    try {
+      const { threadId, data } = JSON.parse(raw) as { threadId: string; data: unknown }
+      const plan = adaptGeneratedTripPlan(data)
+      setActiveConversationId(threadId)
+      setConversationList((current) => current.some(x => x.id === threadId) ? current : [{ id: threadId, title: '参考行程适配', updatedAt: formatConversationUpdatedAt(), status: '已完成' }, ...current])
+      if (plan) setGeneratedTripPlansByConversationId((current) => ({ ...current, [threadId]: plan }))
+      const entries = (data as { values?: { adaptation_log?: Array<{ kind?: string; from?: string; to?: string }> } }).values?.adaptation_log ?? []
+      setMessagesByConversationId((current) => ({ ...current, [threadId]: [{ id: `m-ref-${Date.now()}`, role: 'assistant', time: formatMessageTime(), content: `已按参考方案完成适配。${entries.map(x => `${x.kind}${x.from ? `：${x.from}` : ''}${x.to ? ` → ${x.to}` : ''}`).join('；')}` }] }))
+    } catch { /* ignore stale handoff */ }
+  }, [])
+
   // 旅行历史（左侧会话列表）由后端 GET /api/v1/sessions 提供，挂载时拉取首批。
   useEffect(() => {
     let cancelled = false

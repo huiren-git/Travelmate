@@ -163,6 +163,9 @@ class TravelAgentState(TypedDict):
     summary_text: Optional[str]
     """本轮回复文案：PLAN 模式为行程总结语，REPLAN 模式为针对用户指令的执行反馈语；由 Validator 在 is_finished=True 时一次性生成，随 done 事件返回前端；不参与校验重试循环"""
 
+    adaptation_log: Optional[List[Dict[str, Any]]]
+    """参考行程规则适配产生的可展示修改记录。"""
+
     # ========== 7. 会话管理 ==========
     deleted_at: Optional[str]
     """逻辑删除时间（ISO 格式），为空表示会话仍可见"""

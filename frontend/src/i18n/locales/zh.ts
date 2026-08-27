@@ -7,6 +7,7 @@ export const zh = {
     home: '首页',
     chat: '聊天',
     history: '历史',
+    reference: '参考',
     traces: '评测',
     preferences: '偏好',
     settings: '设置',

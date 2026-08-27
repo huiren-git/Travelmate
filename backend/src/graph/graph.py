@@ -20,6 +20,7 @@ from src.agents.supervisor import supervisor_node
 from src.graph.pre_fetcher import pre_fetcher_node
 from src.graph.state import TravelAgentState
 from src.graph.validator import validator_node
+from src.graph.reference_validator import reference_validator_node
 
 logger = logging.getLogger("travelmate.graph")
 
@@ -168,6 +169,13 @@ def build_graph(checkpoint_path: Optional[str] = None, checkpointer: Optional[An
     )
 
     return builder.compile(checkpointer=checkpointer or _build_checkpointer(checkpoint_path))
+
+def build_reference_adoption_graph(checkpointer: Optional[Any] = None):
+    builder = StateGraph(TravelAgentState)
+    builder.add_node("reference_validator", reference_validator_node)
+    builder.add_edge(START, "reference_validator")
+    builder.add_edge("reference_validator", END)
+    return builder.compile(checkpointer=checkpointer or MemorySaver())
 
 
 _graph_instance = None

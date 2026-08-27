@@ -9,6 +9,7 @@ export const en: Dict = {
     home: 'Home',
     chat: 'Chat',
     history: 'History',
+    reference: 'References',
     traces: 'Traces',
     preferences: 'Preferences',
     settings: 'Settings',

@@ -1,6 +1,7 @@
 import { Avatar, Button, Layout } from 'antd'
 import {
   ApartmentOutlined,
+  CompassOutlined,
   HistoryOutlined,
   MessageOutlined,
   SettingOutlined,
@@ -66,6 +67,9 @@ export function AppHeader() {
         </Button>
         <Button type="text" icon={<HistoryOutlined />} style={{ color: colors.textPrimary }} onClick={() => navigate('/history')}>
           {t('header.history')}
+        </Button>
+        <Button type="text" icon={<CompassOutlined />} style={{ color: colors.textPrimary }} onClick={() => navigate('/reference')}>
+          {t('header.reference')}
         </Button>
         <Button type="text" icon={<ApartmentOutlined />} style={{ color: colors.textPrimary }} onClick={() => navigate('/traces')}>
           {t('header.traces')}

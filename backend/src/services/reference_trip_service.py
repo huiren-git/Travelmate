@@ -5,6 +5,7 @@ import json
 from typing import Any, Mapping, Optional
 
 from src.services.reference_db import get_reference_db_connection
+from src.utils.state_utils import get_travelers
 
 
 def _json(value: Any) -> str:
@@ -47,15 +48,16 @@ async def archive_reference_trip(state: Mapping[str, Any], source_trace_id: Opti
     if not sequence:
         return False
     sequence_hash = hashlib.sha256(_json(sequence).encode("utf-8")).hexdigest()
-    budget = state.get("budget") or {}
+    budget = dict(state.get("budget") or {})
     preferences = state.get("structured_preferences") or {}
+    travelers = get_travelers(state)
     conn = await get_reference_db_connection()
     cursor = await conn.execute(
         """INSERT INTO reference_trips
-           (source_trace_id, destination, duration, sequence, sequence_hash, rhythm, budget, tags, experience_tips, score)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (source_trace_id, destination, duration, sequence, sequence_hash, rhythm, budget, travelers, tags, experience_tips, score)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(destination, duration, sequence_hash) DO NOTHING""",
-        (source_trace_id, destination, duration, _json(sequence), sequence_hash, _json(rhythm), _json(budget), _json(_tags(preferences, budget)), _tips(report), int(report["score"])),
+        (source_trace_id, destination, duration, _json(sequence), sequence_hash, _json(rhythm), _json(budget), travelers, _json(_tags(preferences, budget)), _tips(report), int(report["score"])),
     )
     return cursor.rowcount == 1
 

@@ -48,7 +48,8 @@ export default function HomePage() {
       title: t('home.featureReference.title'),
       slogan: t('home.featureReference.slogan'),
       icon: <CompassOutlined />,
-      enabled: false,
+      enabled: true,
+      path: '/reference',
     },
     {
       title: t('home.featureEval.title'),
@@ -121,7 +122,7 @@ export default function HomePage() {
                 >
                   {t('home.startChat')}
                 </Button>
-                <Button size="large" icon={<CompassOutlined />} onClick={() => handleComingSoon(t('home.attractions'))}>
+                <Button size="large" icon={<CompassOutlined />} onClick={() => navigate('/reference')}>
                   {t('home.attractions')}
                 </Button>
                 <Button size="large" icon={<DashboardOutlined />} onClick={() => navigate('/traces')}>

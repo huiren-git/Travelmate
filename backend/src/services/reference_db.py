@@ -36,6 +36,7 @@ async def init_reference_tables(conn: Optional[aiosqlite.Connection] = None) -> 
             sequence_hash TEXT NOT NULL,
             rhythm TEXT,
             budget TEXT,
+            travelers INTEGER,
             tags TEXT,
             experience_tips TEXT,
             score INTEGER,
@@ -45,6 +46,10 @@ async def init_reference_tables(conn: Optional[aiosqlite.Connection] = None) -> 
         )
         """
     )
+    async with connection.execute("PRAGMA table_info(reference_trips)") as cursor:
+        columns = {row[1] for row in await cursor.fetchall()}
+    if "travelers" not in columns:
+        await connection.execute("ALTER TABLE reference_trips ADD COLUMN travelers INTEGER")
 
 
 async def close_reference_db_pool() -> None:

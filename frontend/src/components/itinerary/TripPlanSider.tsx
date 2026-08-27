@@ -35,32 +35,33 @@ export function TripPlanSider({
   const theme = useAppSettingsStore((state) => state.theme)
   const resolved = resolveTheme(theme)
   const { t } = useI18n()
+
   return (
     <Sider
       width={340}
       theme={resolved === 'dark' ? 'dark' : 'light'}
       className="border-l border-slate-200 bg-white overflow-y-auto dark:border-slate-700 dark:bg-slate-900"
     >
-      <div className="flex h-full items-center justify-center p-4 pb-4 pt-none">
-        {isEmpty ? (
+      {isEmpty ? (
+        <div className="flex h-full items-center justify-center p-4">
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('chat.startPlanHint')} />
-        ) : (
-          <div className="w-full space-y-2 pt-2">
-            <ExpenseSummaryCard
-              expensesByCategory={expensesByCategory}
-              pieConicGradient={pieConicGradient}
-              spentCny={spentCny}
-            />
-            <ItineraryPanel
-              activeDate={activeDate}
-              currentItems={currentItems}
-              datesList={datesList}
-              onSelectedDateIndexChange={onSelectedDateIndexChange}
-              selectedDateIndex={selectedDateIndex}
-            />
-          </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div className="w-full space-y-2 p-4 pt-2">
+          <ExpenseSummaryCard
+            expensesByCategory={expensesByCategory}
+            pieConicGradient={pieConicGradient}
+            spentCny={spentCny}
+          />
+          <ItineraryPanel
+            activeDate={activeDate}
+            currentItems={currentItems}
+            datesList={datesList}
+            onSelectedDateIndexChange={onSelectedDateIndexChange}
+            selectedDateIndex={selectedDateIndex}
+          />
+        </div>
+      )}
     </Sider>
   )
 }
