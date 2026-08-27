@@ -7,99 +7,38 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Header
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
-from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.core.exceptions import AppException
 from src.graph.graph import get_graph_async
+from src.models.chat import (
+    ChatStreamRequest,
+    ResumeRequest,
+    StopChatData,
+    UserDecision,
+)
+from src.models.common import ApiResponse
+from src.utils.preferences_parser import parse_structured_preferences
+
+from src.core.tracing import set_trace_id, generate_trace_id, get_trace_id
+from src.services.tracing_db import start_trace, end_trace
 
 router = APIRouter(prefix="/chat")
 logger = logging.getLogger("travelmate.api.chat")
 
 
-class BudgetInput(BaseModel):
-    """结构化输入中的预算约束。"""
-
-    level: Literal["economy", "mid", "luxury"]
-    min_total: Optional[float] = Field(default=None, ge=0)
-    max_total: Optional[float] = Field(default=None, ge=0)
-
-    # 检查预算上下限的数值关系。
-    @model_validator(mode="after")
-    def validate_range(self) -> "BudgetInput":
-        if self.min_total is not None and self.max_total is not None:
-            if self.min_total > self.max_total:
-                raise ValueError("budget.min_total must not exceed budget.max_total")
-        return self
-
-
-class StructuredInput(BaseModel):
-    """对话请求中的结构化旅行偏好。"""
-
-    destination: str = Field(min_length=1)
-    origin: Optional[str] = None
-    start_date: Optional[str] = None
-    duration: int = Field(gt=0)
-    budget: BudgetInput
-    hotel_preference: Optional[Literal["economy", "mid", "luxury"]] = None
-    intercity_transport: List[
-        Literal["flight", "high_speed_rail", "train", "coach", "self_driving"]
-    ] = Field(default_factory=list)
-    local_transport: List[
-        Literal["metro", "bus", "taxi", "self_driving", "bike", "walking"]
-    ] = Field(default_factory=list)
-    pace: Literal["intensive", "relaxed"] = "relaxed"
-    interests: List[
-        Literal["history", "culture", "food", "nature", "shopping", "art", "nightlife"]
-    ] = Field(default_factory=list)
-    travelers: Optional[int] = Field(default=None, gt=0)
-    travelers_type: Literal["adult", "family", "senior"] = "adult"
-
-
-class ChatStreamRequest(BaseModel):
-    """发起或继续对话的请求体。"""
-
-    thread_id: str = Field(min_length=1)
-    message: str = Field(min_length=1)
-    current_time: Optional[str] = None
-    structured_input: Optional[StructuredInput] = None
-
-    # 清理用户输入中的首尾空白。
-    @field_validator("thread_id", "message")
-    @classmethod
-    def strip_text(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("value must not be empty")
-        return value
-
-
-class UserDecision(BaseModel):
-    """恢复中断流程时提交的用户决策。"""
-
-    action: str
-    hint: Optional[str] = None
-    note: Optional[str] = None
-
-
-class ResumeRequest(BaseModel):
-    """恢复中断流程的请求体。"""
-
-    thread_id: str = Field(min_length=1)
-    user_decision: UserDecision
-
-
 @dataclass
 class ActiveRun:
     """记录一个正在执行的 graph 流程。"""
-
+    # thr_{16位短码}
     thread_id: str
     user_id: str
+    trace_id: str
     queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     task: Optional[asyncio.Task] = None
     stop_requested: bool = False
@@ -111,6 +50,36 @@ _active_runs: Dict[str, ActiveRun] = {}
 
 
 # 将任意 graph 数据转换为可写入 SSE 的 JSON 数据。
+async def _store_user_decision_memory(
+    user_id: str,
+    thread_id: str,
+    decision: Dict[str, Any],
+) -> None:
+    try:
+        from src.services.memory_manager import add_memory
+
+        action = str(decision.get("action") or "").strip()
+        hint = str(decision.get("hint") or "").strip()
+        note = str(decision.get("note") or "").strip()
+        parts = [f"用户在会话 {thread_id} 中选择：{action}"]
+        if hint:
+            parts.append(f"修改要求：{hint}")
+        if note:
+            parts.append(f"备注：{note}")
+        await add_memory(
+            user_id=user_id,
+            text="；".join(parts),
+            memory_type="action",
+            metadata={
+                "source": "chat_resume",
+                "thread_id": thread_id,
+                "decision_action": action,
+            },
+        )
+    except Exception:
+        logger.exception("Failed to store user decision memory")
+
+
 def _jsonable(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _jsonable(item) for key, item in value.items()}
@@ -130,6 +99,29 @@ def _jsonable(value: Any) -> Any:
     return str(value)
 
 
+# 把 LangGraph 的 PregelTask 列表转成可 JSON 序列化的结构（PregelTask/Interrupt 无 model_dump，
+# 原 _jsonable 会退化为 str，导致前端拿不到中断）。仅抽取前端需要的 id/name/interrupts.value。
+def _serialize_interrupts(tasks: Any) -> list:
+    result: list = []
+    for task in tasks or []:
+        interrupts = []
+        for it in getattr(task, "interrupts", ()) or ():
+            interrupts.append(
+                {
+                    "id": getattr(it, "id", None) or getattr(it, "interrupt_id", None),
+                    "value": _jsonable(getattr(it, "value", None)),
+                }
+            )
+        result.append(
+            {
+                "id": getattr(task, "id", None),
+                "name": getattr(task, "name", None),
+                "interrupts": interrupts,
+            }
+        )
+    return result
+
+
 # 将事件名称和数据编码为 Server-Sent Events 消息。
 def _sse(event: str, data: Any) -> str:
     payload = json.dumps(_jsonable(data), ensure_ascii=False, separators=(",", ":"))
@@ -142,29 +134,23 @@ def _utc_now() -> str:
 
 
 # 将结构化表单转换为 TravelAgentState 使用的字段。
-def _structured_state_values(structured_input: Optional[StructuredInput]) -> Dict[str, Any]:
+def _structured_state_values(structured_input) -> Dict[str, Any]:
     if structured_input is None:
         return {}
 
-    preferences = {
-        "budget_level": structured_input.budget.level,
-        "budget_min_total": structured_input.budget.min_total,
-        "budget_max_total": structured_input.budget.max_total,
-        "hotel_preference": structured_input.hotel_preference or structured_input.budget.level,
-        "intercity_transport": structured_input.intercity_transport,
-        "local_transport": structured_input.local_transport,
-        "pace": structured_input.pace,
-        "interests": structured_input.interests,
-        "travelers": structured_input.travelers or 1,
-        "travelers_type": structured_input.travelers_type,
-    }
-    return {
-        "destination": structured_input.destination,
-        "origin": structured_input.origin,
-        "start_date": structured_input.start_date,
-        "duration": structured_input.duration,
-        "structured_preferences": preferences,
-    }
+    raw = (
+        structured_input.model_dump()
+        if hasattr(structured_input, "model_dump")
+        else structured_input
+    )
+    parsed = parse_structured_preferences(raw)
+    if not parsed:
+        return {}
+    values: Dict[str, Any] = {"structured_preferences": parsed}
+    # 把 start_date 提到顶层，供 _initial_state 的 start_date 字段直接读取
+    if "start_date" in parsed:
+        values["start_date"] = parsed["start_date"]
+    return values
 
 
 # 构造首次运行 graph 所需的完整 State。
@@ -183,6 +169,10 @@ def _initial_state(request: ChatStreamRequest, user_id: str) -> Dict[str, Any]:
         "fetched_attractions": None,
         "daily_itinerary": None,
         "budget": None,
+        "budget_max_allowed": None,
+        "budget_auto_retry": 0,
+        "budget_dirty": False,
+        "auto_reduce_budget": False,
         "draft_daily_itinerary": None,
         "draft_budget": None,
         "plan_mode": "plan",
@@ -193,6 +183,9 @@ def _initial_state(request: ChatStreamRequest, user_id: str) -> Dict[str, Any]:
         "soft_validation_attempts": 0,
         "validation_report": None,
         "is_finished": False,
+        "terminal_status": "running",
+        "failure_reason": None,
+        "summary_text": None,
         "deleted_at": None,
         "next_node": None,
     }
@@ -318,66 +311,62 @@ async def _run_graph(
     graph_input: Any,
     config: Dict[str, Any],
 ) -> None:
-    try:
-        async for update in graph.astream(graph_input, config=config, stream_mode="updates"):
-            if run.stop_requested:
-                break
-            event = _node_event(run.thread_id, update)
-            run.partial_tokens += _estimate_tokens(event)
-            run.has_partial_result = True
-            await run.queue.put(("node", event))
+    """
+    异步执行 LangGraph，并将节点更新推送到 SSE 队列。
 
+    Args:
+        run: 当前运行的上下文（含 trace_id、queue、stop_requested）
+        graph: 编译后的 LangGraph 实例
+        graph_input: 初始 State 输入
+        config: LangGraph 的运行配置（含 thread_id 等）
+    """
+    try:
+        # 1. 流式执行 Graph
+        async for update in graph.astream(
+            graph_input,
+            config=config,
+            stream_mode="updates",  # 仅获取节点更新（也可用 "values" 获取全量状态）
+        ):
+            # 2. 检查停止标志
+            if run.stop_requested:
+                logger.info(f"Graph 执行被用户停止: {run.trace_id}")
+                break
+
+            # 3. 将节点更新放入队列（SSE 会消费）
+            await run.queue.put(("node", update))
+
+        # 4. 获取最终状态快照（用于 "done" 事件）
+        final_state = await graph.aget_state(config)
+        snapshot = {
+            "values": final_state.values,
+            "next": final_state.next,
+            "tasks": _serialize_interrupts(final_state.tasks),
+        }
+
+        # 5. 根据是否被停止来决定最终状态
         if run.stop_requested:
-            await run.queue.put(
-                (
-                    "stopped",
-                    {
-                        "thread_id": run.thread_id,
-                        "stopped_at": _utc_now(),
-                        "partial_tokens": run.partial_tokens,
-                        "has_partial_result": run.has_partial_result,
-                        "tip": "已为您保留当前已生成的部分行程，可继续修改或重新生成",
-                    },
-                )
-            )
+            await end_trace(run.trace_id, status="cancelled")
+            await run.queue.put(("stopped", {"trace_id": run.trace_id}))
         else:
-            snapshot = await graph.aget_state(config)
-            await run.queue.put(
-                (
-                    "done",
-                    {
-                        "thread_id": run.thread_id,
-                        "state": _jsonable(getattr(snapshot, "values", {})),
-                    },
-                )
-            )
+            await end_trace(run.trace_id, status="success")
+            await run.queue.put(("done", snapshot))
+
     except asyncio.CancelledError:
+        # 6. 任务被显式取消（如客户端断开）
+        logger.info(f"Graph 任务被取消: {run.trace_id}")
+        await end_trace(run.trace_id, status="cancelled")
         run.stop_requested = True
-        await run.queue.put(
-            (
-                "stopped",
-                {
-                    "thread_id": run.thread_id,
-                    "stopped_at": _utc_now(),
-                    "partial_tokens": run.partial_tokens,
-                    "has_partial_result": run.has_partial_result,
-                    "tip": "已为您保留当前已生成的部分行程，可继续修改或重新生成",
-                },
-            )
-        )
+        await run.queue.put(("stopped", {"trace_id": run.trace_id}))
+        # 注意：不要重新抛出，让 finally 正常执行
+
     except Exception as exc:
-        logger.exception("Graph stream failed for thread_id=%s", run.thread_id)
-        await run.queue.put(
-            (
-                "error",
-                {
-                    "code": 50301,
-                    "message": "AI 服务暂时不可用，请稍后重试",
-                    "details": {"error": str(exc)},
-                },
-            )
-        )
+        # 7. 业务异常（如 LLM 超时、JSON 解析失败等）
+        logger.exception(f"Graph 执行异常: {run.trace_id} - {exc}")
+        await end_trace(run.trace_id, status="error", error_msg=str(exc))
+        await run.queue.put(("error", {"trace_id": run.trace_id, "error": str(exc)}))
+
     finally:
+        # 8. 无论何种退出，都通知队列关闭（SSE 会收到 close 事件）
         await run.queue.put(("close", None))
 
 
@@ -389,13 +378,15 @@ async def _event_stream(run: ActiveRun):
             if event == "close":
                 break
             yield _sse(event, data)
+    except Exception as e:
+        # 这里只处理 queue.get() 本身的异常（极小概率），直接记录日志即可
+        logger.exception("SSE stream consumer error")
+        raise
     finally:
         if run.task and not run.task.done():
-            run.stop_requested = True
             run.task.cancel()
         if _active_runs.get(run.thread_id) is run:
             _active_runs.pop(run.thread_id, None)
-
 
 # 启动一次新的 graph 流程并返回 SSE 流。
 @router.post("/stream")
@@ -403,6 +394,7 @@ async def chat_stream(
     request: ChatStreamRequest,
     user_id: str = Header(..., alias="X-User-Id"),
 ):
+    # 1. 检查当前会话是否已经在运行中，避免重复启动。
     if request.thread_id in _active_runs:
         raise AppException(
             code=40902,
@@ -410,6 +402,18 @@ async def chat_stream(
             status_code=409,
             details={"thread_id": request.thread_id},
         )
+
+    # 2. 生成并设置 Trace ID
+    trace_id = generate_trace_id()
+    set_trace_id(trace_id)
+    
+    # 3. 将 trace_id 存入数据库（状态：running）
+    await start_trace(
+        trace_id=trace_id,
+        thread_id=request.thread_id,
+        user_id=user_id,
+        input_message=request.message
+    )
 
     try:
         graph = await _get_graph()
@@ -420,18 +424,21 @@ async def chat_stream(
             graph_input: Any = _continuation_input(request)
         else:
             graph_input = _initial_state(request, user_id)
-    except AppException:
+    except AppException as e:
+        # 4. 异常时更新 trace 状态为 error
+        await end_trace(trace_id, status="error", error_msg=str(e))
         raise
-    except Exception as exc:
+    except Exception as e:
+        await end_trace(trace_id, status="error", error_msg=str(e))
         logger.exception("Unable to prepare chat stream")
         raise AppException(
             code=50301,
             message="AI 服务暂时不可用，请稍后重试",
             status_code=503,
-            details={"error": str(exc)},
-        ) from exc
+            details={"error": str(e)},
+        ) from e
 
-    run = ActiveRun(thread_id=request.thread_id, user_id=user_id)
+    run = ActiveRun(thread_id=request.thread_id, user_id=user_id, trace_id=trace_id)
     _active_runs[request.thread_id] = run
     run.task = asyncio.create_task(
         _run_graph(run, graph, graph_input, _thread_config(request.thread_id))
@@ -448,7 +455,7 @@ async def chat_stream(
 
 
 # 停止指定会话正在执行的 graph 流程。
-@router.post("/stop/{thread_id}")
+@router.post("/stop/{thread_id}", response_model=ApiResponse[StopChatData])
 async def stop_chat(
     thread_id: str,
     user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
@@ -474,17 +481,17 @@ async def stop_chat(
     if run.task and not run.task.done():
         run.task.cancel()
 
-    return {
-        "code": 200,
-        "message": "生成已终止",
-        "data": {
-            "thread_id": thread_id,
-            "stopped_at": _utc_now(),
-            "partial_tokens": run.partial_tokens,
-            "has_partial_result": run.has_partial_result,
-            "tip": "已为您保留当前已生成的部分行程，可继续修改或重新生成",
-        },
-    }
+    return ApiResponse(
+        code=200,
+        message="生成已终止",
+        data=StopChatData(
+            thread_id=thread_id,
+            stopped_at=_utc_now(),
+            partial_tokens=run.partial_tokens,
+            has_partial_result=run.has_partial_result,
+            tip="已为您保留当前已生成的部分行程，可继续修改或重新生成",
+        ),
+    )
 
 
 # 恢复处于 LangGraph interrupt 状态的会话并返回后续 SSE 流。
@@ -526,7 +533,10 @@ async def resume_chat(
             details={"error": str(exc)},
         ) from exc
 
-    run = ActiveRun(thread_id=request.thread_id, user_id=user_id)
+    await _store_user_decision_memory(user_id, request.thread_id, decision)
+    trace_id = generate_trace_id()
+    set_trace_id(trace_id)
+    run = ActiveRun(thread_id=request.thread_id, user_id=user_id, trace_id = trace_id)
     _active_runs[request.thread_id] = run
     run.task = asyncio.create_task(
         _run_graph(

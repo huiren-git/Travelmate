@@ -1,16 +1,40 @@
 import type { TravelHistory } from '../types/history'
 import type { ProfileTravelStats } from '../types/profile'
 
-function parseDate(value: string) {
-  const [year, month, day] = value.split('.').map(Number)
-  return Date.UTC(year, month - 1, day)
+// 兼容 "2026.7.12" 与 "7.12"（无年份按当前年补全）；非法/缺值返回 null
+function parseDate(value: string): number | null {
+  if (!value || typeof value !== 'string') return null
+  const parts = value.split('.').map(Number)
+  if (parts.some((n) => Number.isNaN(n))) return null
+
+  let year: number
+  let month: number
+  let day: number
+  if (parts.length === 3) {
+    ;[year, month, day] = parts
+  } else if (parts.length === 2) {
+    year = new Date().getFullYear()
+    ;[month, day] = parts
+  } else {
+    return null
+  }
+
+  const timestamp = Date.UTC(year, month - 1, day)
+  return Number.isNaN(timestamp) ? null : timestamp
 }
 
-function getInclusiveDays(dateRange: string) {
-  const [startDate, endDate] = dateRange.split(' - ')
-  const millisecondsPerDay = 24 * 60 * 60 * 1000
+function getInclusiveDays(dateRange: string): number {
+  if (!dateRange || dateRange === '日期待定') return 0
+  const [startPart, endPart] = dateRange.split(' - ')
+  if (!startPart || !endPart) return 0
 
-  return Math.round((parseDate(endDate) - parseDate(startDate)) / millisecondsPerDay) + 1
+  const start = parseDate(startPart)
+  const end = parseDate(endPart)
+  if (start == null || end == null) return 0
+
+  const millisecondsPerDay = 24 * 60 * 60 * 1000
+  const days = Math.round((end - start) / millisecondsPerDay) + 1
+  return days > 0 ? days : 0
 }
 
 export function getProfileTravelStats(histories: TravelHistory[]): ProfileTravelStats {

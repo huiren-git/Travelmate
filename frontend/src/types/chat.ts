@@ -11,11 +11,24 @@ export type Conversation = {
   status: ConversationStatus
 }
 
+export type StructuredPreferences = {
+  start_date?: string
+  budget_level?: '经济实惠' | '舒适出行' | '奢华体验'
+  pace?: '轻松' | '适中' | '紧凑'
+  interests?: string[]
+  travelers?: number
+  travelers_type?: '独自出行' | '情侣' | '亲子' | '朋友' | '家庭' | '长辈同行'
+  hotel_preference?: '经济型酒店' | '舒适型酒店' | '高端酒店' | '特色民宿'
+  intercity_transport?: '火车' | '飞机' | '自驾' | '无偏好'
+  local_transport?: '步行' | '公共交通' | '打车' | '租车' | '无偏好'
+}
+
 export type ChatMessage = {
   id: string
   role: 'user' | 'assistant'
   content: string
   time: string
+  structured_preferences?: StructuredPreferences
 }
 
 export type ItineraryItem = {
@@ -27,6 +40,7 @@ export type ItineraryItem = {
   status: ItineraryStatus
   imageUrl: string
   category: ItineraryCategory
+  tips?: string
 }
 
 export type ExpenseCategory = {
@@ -41,4 +55,10 @@ export type TripSummary = {
   people: number
   budgetCny: number
   spentCny: number
+}
+
+export type GeneratedTripPlan = {
+  trip: TripSummary
+  itinerary: ItineraryItem[]
+  expensesByCategory: ExpenseCategory[]
 }

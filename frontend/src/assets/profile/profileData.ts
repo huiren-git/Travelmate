@@ -16,6 +16,7 @@ export const initialPreferenceSettings: PreferenceSettings = {
   travelTypes: ['美食', '摄影'],
   budgetPreference: '舒适出行',
   transportPreference: '飞机',
+  dietaryPreferences: [],
   customPreferences: [],
 }
 

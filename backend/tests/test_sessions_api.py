@@ -106,7 +106,7 @@ async def test_get_sessions_filters_owner_and_paginates(monkeypatch):
             values={
                 "user_id": "user-1",
                 "destination": "北京",
-                "start_date": "2026-08-10",
+                "start_date": "2026-08-20",
                 "duration": 3,
                 "is_finished": True,
             },
@@ -195,18 +195,19 @@ async def test_get_session_snapshot_returns_checkpoint_view(monkeypatch):
         user_id="user-1",
     )
 
-    assert body["session_id"] == "thread-snapshot"
-    assert body["state"]["blackboard"]["destination"] == "北京"
-    assert body["state"]["task_list"][0]["status"] == "done"
-    assert body["graph_structure"]["nodes"] == [
+    assert body.code == 200
+    assert body.data.session_id == "thread-snapshot"
+    assert body.data.state["blackboard"]["destination"] == "北京"
+    assert body.data.state["task_list"][0]["status"] == "done"
+    assert body.data.graph_structure["nodes"] == [
         "pre_fetcher",
         "supervisor",
         "itinerary_agent",
         "budget_agent",
         "validator",
     ]
-    assert body["metadata"]["total_llm_calls"] == 2
-    assert body["metadata"]["trace_logs"] == ["raw llm trace"]
+    assert body.data.metadata["total_llm_calls"] == 2
+    assert body.data.metadata["trace_logs"] == ["raw llm trace"]
 
 
 # 验证删除接口会校验归属并将指定 thread 标记为逻辑删除。

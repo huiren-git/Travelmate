@@ -1,8 +1,11 @@
 import { Layout } from 'antd'
 import { ChatInput } from '../components/chat/ChatInput'
+import { BudgetOverrunBubble } from '../components/chat/BudgetOverrunBubble'
 import { ChatMessages } from '../components/chat/ChatMessages'
 import { ConversationSider } from '../components/chat/ConversationSider'
+import { NewTripEmptyState } from '../components/chat/NewTripEmptyState'
 import { TripSummaryCard } from '../components/chat/TripSummaryCard'
+import { TripTipsCard } from '../components/chat/TripTipsCard'
 import { TripPlanSider } from '../components/itinerary/TripPlanSider'
 import type { ChatPageState } from '../hooks/useChatPageState'
 
@@ -20,16 +23,26 @@ export function ChatLayout({
   datesList,
   draft,
   expensesByCategory,
+  isLoadingConversations,
+  isTripPlanEmpty,
+  isStreaming,
+  itinerary,
   messages,
+  pendingInterrupt,
   pieConicGradient,
   remaining,
   selectedDateIndex,
-  setActiveConversationId,
+  selectConversation,
   setDraft,
   setSelectedDateIndex,
   setSiderCollapsed,
+  setStructuredPreferences,
   sendMessage,
+  resolveInterrupt,
+  showNewTripEmptyState,
+  startNewTrip,
   siderCollapsed,
+  structuredPreferences,
   trip,
 }: ChatLayoutProps) {
   return (
@@ -37,20 +50,46 @@ export function ChatLayout({
       <ConversationSider
         activeConversationId={activeConversationId}
         conversations={conversations}
-        onConversationChange={setActiveConversationId}
+        isLoading={isLoadingConversations}
+        onConversationChange={selectConversation}
+        onNewTrip={startNewTrip}
         onSiderCollapsedChange={setSiderCollapsed}
         siderCollapsed={siderCollapsed}
       />
 
       <Content style={{ background: colors.bg }} className="relative h-full overflow-hidden">
         <div className="h-full p-4 overflow-y-auto">
-          <div className="mx-auto flex min-h-full max-w-[980px] flex-col gap-4 pb-28">
-            <TripSummaryCard conversationStatus={activeConversation.status} remaining={remaining} trip={trip} />
-            <ChatMessages messages={messages} primaryColor={colors.primary} />
+          <div className="mx-auto flex min-h-full max-w-[980px] flex-col gap-4 pb-44">
+            {showNewTripEmptyState ? (
+              <NewTripEmptyState />
+            ) : (
+              <>
+                {activeConversation && trip && !isTripPlanEmpty && (
+                  <TripSummaryCard conversationStatus={activeConversation.status} remaining={remaining} trip={trip} />
+                )}
+                <ChatMessages messages={messages} primaryColor={colors.primary} />
+                {pendingInterrupt && (
+                  <BudgetOverrunBubble
+                    payload={pendingInterrupt}
+                    primaryColor={colors.primary}
+                    onResolve={resolveInterrupt}
+                    isResolving={isStreaming}
+                  />
+                )}
+                {itinerary && itinerary.length > 0 && <TripTipsCard itinerary={itinerary} />}
+              </>
+            )}
           </div>
         </div>
 
-        <ChatInput accentColor={colors.accent} draft={draft} onDraftChange={setDraft} onSend={sendMessage} />
+        <ChatInput
+          accentColor={colors.accent}
+          draft={draft}
+          onDraftChange={setDraft}
+          onSend={sendMessage}
+          onStructuredPreferencesChange={setStructuredPreferences}
+          structuredPreferences={structuredPreferences}
+        />
       </Content>
 
       <TripPlanSider
@@ -58,10 +97,11 @@ export function ChatLayout({
         currentItems={currentItems}
         datesList={datesList}
         expensesByCategory={expensesByCategory}
+        isEmpty={isTripPlanEmpty}
         onSelectedDateIndexChange={setSelectedDateIndex}
         pieConicGradient={pieConicGradient}
         selectedDateIndex={selectedDateIndex}
-        spentCny={trip.spentCny}
+        spentCny={trip?.spentCny ?? 0}
       />
     </Layout>
   )

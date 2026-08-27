@@ -125,8 +125,8 @@ async def test_stop_chat_cancels_active_run(monkeypatch):
     chunks = [chunk async for chunk in response.body_iterator]
     body = "".join(chunk.decode() if isinstance(chunk, bytes) else chunk for chunk in chunks)
 
-    assert result["code"] == 200
-    assert result["data"]["thread_id"] == "thread-stop"
+    assert result.code == 200
+    assert result.data.thread_id == "thread-stop"
     assert "event: stopped" in body
 
 
@@ -135,6 +135,7 @@ async def test_stop_chat_cancels_active_run(monkeypatch):
 async def test_resume_chat_uses_langgraph_command(monkeypatch):
     graph = FakeGraph()
     thread_id = "thread-resume"
+    stored_decisions = []
     graph.snapshots[thread_id] = FakeSnapshot(
         values={
             "user_id": "user-1",
@@ -147,7 +148,11 @@ async def test_resume_chat_uses_langgraph_command(monkeypatch):
     async def fake_get_graph():
         return graph
 
+    async def fake_store_decision(user_id, thread_id, decision):
+        stored_decisions.append((user_id, thread_id, decision))
+
     monkeypatch.setattr(chat_api, "_get_graph", fake_get_graph)
+    monkeypatch.setattr(chat_api, "_store_user_decision_memory", fake_store_decision)
 
     response = await chat_api.resume_chat(
         ResumeRequest(
@@ -167,6 +172,17 @@ async def test_resume_chat_uses_langgraph_command(monkeypatch):
     assert isinstance(graph.stream_inputs[0], Command)
     assert graph.stream_inputs[0].resume["action"] == "modify"
     assert graph.stream_inputs[0].resume["hint"] == "把预算压缩到 2200 元以内"
+    assert stored_decisions == [
+        (
+            "user-1",
+            thread_id,
+            {
+                "action": "modify",
+                "hint": "把预算压缩到 2200 元以内",
+                "note": "优先保留历史景点",
+            },
+        )
+    ]
 
 
 # 验证修改决策缺少 hint 时返回说明书约定的业务错误。

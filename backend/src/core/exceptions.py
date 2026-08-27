@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from src.config.settings import settings
 from src.core.logging import get_logger
+from src.models.common import ErrorDetail, ErrorResponse
 
 logger = get_logger("exceptions")
 
@@ -31,6 +32,7 @@ CODE_MISSING_PREFERENCE_CONTENT = 40007
 CODE_SESSION_NOT_FOUND = 40401
 CODE_ITINERARY_SNAPSHOT_NOT_FOUND = 40402
 CODE_PREFERENCE_TAG_NOT_FOUND = 40403
+CODE_ITINERARY_IMAGE_NOT_FOUND = 42201
 
 CODE_SESSION_NOT_INTERRUPTED = 40901
 
@@ -50,6 +52,7 @@ ERROR_MESSAGES: Dict[int, str] = {
     CODE_SESSION_NOT_FOUND: "会话不存在或已过期",
     CODE_ITINERARY_SNAPSHOT_NOT_FOUND: "行程快照不存在",
     CODE_PREFERENCE_TAG_NOT_FOUND: "用户偏好标签不存在",
+    CODE_ITINERARY_IMAGE_NOT_FOUND: "行程景点图片不存在或不可用",
     CODE_SESSION_NOT_INTERRUPTED: "当前会话不在中断状态，无需恢复",
 }
 
@@ -69,6 +72,7 @@ ERROR_HTTP_STATUS: Dict[int, int] = {
     CODE_SESSION_NOT_FOUND: status.HTTP_404_NOT_FOUND,
     CODE_ITINERARY_SNAPSHOT_NOT_FOUND: status.HTTP_404_NOT_FOUND,
     CODE_PREFERENCE_TAG_NOT_FOUND: status.HTTP_404_NOT_FOUND,
+    CODE_ITINERARY_IMAGE_NOT_FOUND: status.HTTP_422_UNPROCESSABLE_CONTENT,
     CODE_SESSION_NOT_INTERRUPTED: status.HTTP_409_CONFLICT,
 }
 
@@ -183,15 +187,23 @@ def raise_preference_tag_not_found(tag_id: Optional[str] = None, details: Option
     raise_app_exception(CODE_PREFERENCE_TAG_NOT_FOUND, details=details)
 
 
+# 抛出行程项缺少可用真实图片错误。
+def raise_itinerary_image_not_found(details: Optional[Any] = None, message: Optional[str] = None) -> None:
+    raise_app_exception(CODE_ITINERARY_IMAGE_NOT_FOUND, message=message, details=details)
+
+
 # 抛出当前会话不在中断状态错误。
 def raise_session_not_interrupted(details: Optional[Any] = None, message: Optional[str] = None) -> None:
     raise_app_exception(CODE_SESSION_NOT_INTERRUPTED, message=message, details=details)
 
 
 # 将 Pydantic 校验错误转换为统一 details 结构。
-def _format_validation_errors(exc: RequestValidationError) -> list[dict[str, str]]:
+def _format_validation_errors(exc: RequestValidationError) -> list[ErrorDetail]:
     return [
-        {"field": ".".join(str(loc) for loc in error["loc"]), "error": error["msg"]}
+        ErrorDetail(
+            field=".".join(str(loc) for loc in error["loc"]),
+            error=error["msg"],
+        )
         for error in exc.errors()
     ]
 
@@ -202,9 +214,14 @@ def setup_exception_handlers(app: FastAPI):
     @app.exception_handler(AppException)
     async def app_exception_handler(request: Request, exc: AppException):
         logger.warning(f"业务异常: code={exc.code}, message={exc.message}")
+        response = ErrorResponse(
+            code=exc.code,
+            message=exc.message,
+            details=exc.details,
+        )
         return JSONResponse(
             status_code=exc.status_code,
-            content={"code": exc.code, "message": exc.message, "details": exc.details},
+            content=response.model_dump(exclude_none=True),
         )
 
     # 处理 FastAPI/Pydantic 请求参数校验异常。
@@ -212,24 +229,27 @@ def setup_exception_handlers(app: FastAPI):
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
         errors = _format_validation_errors(exc)
         logger.warning(f"参数校验失败: {errors}")
+        response = ErrorResponse(
+            code=CODE_VALIDATION_ERROR,
+            message=ERROR_MESSAGES[CODE_VALIDATION_ERROR],
+            details=errors,
+        )
         return JSONResponse(
             status_code=ERROR_HTTP_STATUS[CODE_VALIDATION_ERROR],
-            content={
-                "code": CODE_VALIDATION_ERROR,
-                "message": ERROR_MESSAGES[CODE_VALIDATION_ERROR],
-                "details": errors,
-            },
+            content=response.model_dump(exclude_none=True),
         )
 
     # 处理未捕获的系统异常。
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
         logger.error(f"未捕获异常: {type(exc).__name__}: {exc}", exc_info=True)
+        details = {"error": str(exc)} if settings.debug else None
+        response = ErrorResponse(
+            code=CODE_INTERNAL_ERROR,
+            message=ERROR_MESSAGES[CODE_INTERNAL_ERROR],
+            details=details,
+        )
         return JSONResponse(
             status_code=ERROR_HTTP_STATUS[CODE_INTERNAL_ERROR],
-            content={
-                "code": CODE_INTERNAL_ERROR,
-                "message": ERROR_MESSAGES[CODE_INTERNAL_ERROR],
-                "details": {"error": str(exc) if settings.debug else None},
-            },
+            content=response.model_dump(exclude_none=True),
         )

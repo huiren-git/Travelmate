@@ -7,16 +7,18 @@
 # src/graph/pre_fetcher.py
 import asyncio
 import logging
-from datetime import datetime
 from typing import Dict, Any
 
+from src.core.tracing import trace_span
 from src.graph.state import TravelAgentState
+from src.utils.state_utils import get_start_date
 from src.services.weather import fetch_weather_with_cache
 from src.services.map import fetch_attractions_with_cache
 import src.services.redis_client as redis_service
 
 logger = logging.getLogger("travelmate.graph.pre_fetcher")
 
+@trace_span("graph.pre_fetcher.pre_fetcher_node")
 async def pre_fetcher_node(state: TravelAgentState) -> Dict[str, Any]:
     destination = state.get("destination")
     start_date = state.get("start_date")
@@ -34,7 +36,7 @@ async def pre_fetcher_node(state: TravelAgentState) -> Dict[str, Any]:
     weather_info, fetched_attractions = await asyncio.gather(weather_task, attractions_task)
     
     # 补充日期信息
-    weather_info["date"] = start_date or datetime.now().strftime("%Y-%m-%d")
+    weather_info["date"] = start_date or get_start_date(state).isoformat()
     
     logger.info(f"获取到 {len(fetched_attractions)} 个景点")
     return {

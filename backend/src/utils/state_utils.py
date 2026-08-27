@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 from src.graph.state import TravelAgentState
@@ -11,6 +11,7 @@ DEFAULT_START_DATE = date(2026, 8, 10)
 DEFAULT_DESTINATION = "目的地"
 ALLOWED_BUDGET_LEVELS = {"economy", "mid", "luxury"}
 ALLOWED_MODES = {"plan", "replan"}
+CHINA_TIMEZONE = timezone(timedelta(hours=8))
 
 
 # 将任意值转换为正整数，失败时返回默认值。
@@ -59,14 +60,35 @@ def get_optional_duration(state: TravelAgentState) -> Optional[int]:
 
 
 # 获取出发日期对象，格式非法时返回默认日期。
-def get_start_date(state: TravelAgentState, default: date = DEFAULT_START_DATE) -> date:
+def get_start_date(state: TravelAgentState, default: Optional[date] = None) -> date:
     raw = state.get("start_date")
     if isinstance(raw, str):
         try:
             return date.fromisoformat(raw)
         except ValueError:
             pass
-    return default
+    if default is not None:
+        return default
+    current_time = normalized_text(state.get("current_time"), None)
+    try:
+        current_dt = datetime.fromisoformat(current_time.replace("Z", "+00:00")) if current_time else None
+    except ValueError:
+        current_dt = None
+    if current_dt is None:
+        current_dt = datetime.now(CHINA_TIMEZONE)
+    elif current_dt.tzinfo is None:
+        current_dt = current_dt.replace(tzinfo=CHINA_TIMEZONE)
+    else:
+        current_dt = current_dt.astimezone(CHINA_TIMEZONE)
+
+    next_midnight = datetime.combine(
+        current_dt.date() + timedelta(days=1),
+        time.min,
+        tzinfo=CHINA_TIMEZONE,
+    )
+    if next_midnight - current_dt > timedelta(hours=12):
+        return current_dt.date()
+    return current_dt.date() + timedelta(days=1)
 
 
 # 获取出发日期文本，缺失时返回默认值。
@@ -115,6 +137,47 @@ def get_pace(state: TravelAgentState, default: str = "relaxed") -> str:
     return pace if isinstance(pace, str) and pace else default
 
 
+# 获取兴趣类别偏好列表（history/culture/food/nature/shopping/art/nightlife）。
+def get_interests(state: TravelAgentState) -> List[str]:
+    preferences = get_structured_preferences(state)
+    interests = preferences.get("interests")
+    if not isinstance(interests, list):
+        return []
+    return [item for item in interests if isinstance(item, str) and item]
+
+
+# 获取住宿偏好等级（economy/mid/luxury），缺失时返回 None。
+def get_hotel_preference(state: TravelAgentState) -> Optional[str]:
+    preferences = get_structured_preferences(state)
+    hotel = preferences.get("hotel_preference")
+    return hotel if isinstance(hotel, str) and hotel else None
+
+
+# 获取市内交通偏好列表（metro/bus/taxi/self_driving/bike/walking）。
+def get_local_transport(state: TravelAgentState) -> List[str]:
+    preferences = get_structured_preferences(state)
+    transport = preferences.get("local_transport")
+    if not isinstance(transport, list):
+        return []
+    return [item for item in transport if isinstance(item, str) and item]
+
+
+# 获取城际交通偏好列表（flight/high_speed_rail/train/coach/self_driving）。
+def get_intercity_transport(state: TravelAgentState) -> List[str]:
+    preferences = get_structured_preferences(state)
+    transport = preferences.get("intercity_transport")
+    if not isinstance(transport, list):
+        return []
+    return [item for item in transport if isinstance(item, str) and item]
+
+
+# 获取出行人群类型（adult/family/senior），缺失时返回 None。
+def get_travelers_type(state: TravelAgentState) -> Optional[str]:
+    preferences = get_structured_preferences(state)
+    ttype = preferences.get("travelers_type")
+    return ttype if isinstance(ttype, str) and ttype else None
+
+
 # 获取每日行程列表，缺失或类型不对时返回空列表。
 def get_daily_itinerary(state: TravelAgentState) -> List[Dict[str, Any]]:
     itinerary = state.get("daily_itinerary") or []
@@ -130,6 +193,12 @@ def get_draft_daily_itinerary(state: TravelAgentState) -> List[Dict[str, Any]]:
 # 获取预算对象，缺失或类型不对时返回空字典。
 def get_budget(state: TravelAgentState) -> Dict[str, Any]:
     budget = state.get("budget") or {}
+    return budget if isinstance(budget, dict) else {}
+
+
+def get_draft_budget(state: TravelAgentState) -> Dict[str, Any]:
+    """获取预算草稿对象，缺失或类型不对时返回空字典。"""
+    budget = state.get("draft_budget") or {}
     return budget if isinstance(budget, dict) else {}
 
 

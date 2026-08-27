@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from src.core.tracing import trace_span
 from src.graph.state import TravelAgentState
 from src.utils.llm_utils import call_llm, ensure_dict, extract_json, message_content
 from src.utils.state_utils import (
@@ -17,7 +18,7 @@ from src.utils.state_utils import (
     get_origin,
     get_plan_mode,
     get_start_date_text,
-    get_structured_preferences,
+    get_travelers,
     has_budget,
     has_daily_itinerary,
     normalized_text,
@@ -50,7 +51,6 @@ def _state_summary(state: TravelAgentState, user_message: str) -> str:
             "current_time": get_current_time(state),
             "has_daily_itinerary": has_daily_itinerary(state),
             "has_budget": has_budget(state),
-            "structured_preferences": get_structured_preferences(state),
         },
         ensure_ascii=False,
     )
@@ -72,6 +72,8 @@ JSON schema:
   "plan_mode": "plan | replan",
   "destination": "如果从用户消息中识别出目的地则填写，否则 null",
   "duration": "如果从用户消息中识别出旅行天数则填写整数，否则 null",
+  "budget_max": "如果用户消息中明确提到预算金额上限则填写整数元，否则 null",
+  "budget_scope": "total | per_person，预算金额是总额还是人均，默认 total",
   "reply": "当 next_node 为 __end__ 时给用户的追问或说明，否则 null",
   "reason": "一句话说明路由原因"
 }
@@ -123,12 +125,23 @@ def _normalize_decision(raw: Dict[str, Any], state: TravelAgentState, user_messa
     if next_node == "itinerary_agent" and _looks_like_replan_request(state, user_message):
         plan_mode = "replan"
 
+    budget_max = as_positive_int(raw.get("budget_max"), None)
+    budget_scope = (
+        raw.get("budget_scope")
+        if raw.get("budget_scope") in {"total", "per_person"}
+        else "total"
+    )
+    # 人均预算折算为总额：乘以出行人数
+    if budget_max and budget_scope == "per_person":
+        budget_max = budget_max * max(1, get_travelers(state))
+
     return {
         "next_node": next_node,
         "plan_mode": plan_mode,
         "current_mode": plan_mode,
         "destination": normalized_text(raw.get("destination"), None),
         "duration": as_positive_int(raw.get("duration"), None),
+        "budget_max": budget_max,
         "reply": normalized_text(raw.get("reply"), None),
         "reason": raw.get("reason"),
     }
@@ -162,6 +175,10 @@ def _ask_for_missing_fields(missing: list[str], reply: Optional[str] = None) -> 
 
 
 # 调用 LLM 识别用户意图，并把路由字段写回 State。
+@trace_span(
+    "agents.supervisor.supervisor_node",
+    span_type="workflow",
+)
 async def supervisor_node(state: TravelAgentState) -> Dict[str, Any]:
     messages = state.get("messages", [])
     if not messages:
@@ -200,5 +217,13 @@ async def supervisor_node(state: TravelAgentState) -> Dict[str, Any]:
         update["destination"] = decision["destination"]
     if decision.get("duration") and not get_optional_duration(state):
         update["duration"] = decision["duration"]
+    # 文本预算优先于表单 budget_level：supervisor 抽取到金额则直接写入上限；
+    # 与旧值不同（含从无到有）时置 budget_dirty，让 replan 也重跑 budget_agent 重翻 total。
+    if decision.get("budget_max"):
+        new_max = decision["budget_max"]
+        update["budget_max_allowed"] = new_max
+        prev_max = state.get("budget_max_allowed")
+        if prev_max is None or float(prev_max) != float(new_max):
+            update["budget_dirty"] = True
 
     return update

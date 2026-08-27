@@ -109,7 +109,7 @@ def _count_sqlite_checkpoints(db_path: Path, thread_id: str) -> int:
 
 # 验证真实 LLM、天气、地图 API 生成的北京三日游结果能够持久化到 SQLite。
 @pytest.mark.asyncio
-async def test_beijing_three_day_trip_plan_real_llm_api_and_sqlite_persistence(monkeypatch, tmp_path):
+async def test_beijing_three_day_trip_plan_real_api_llm_and_sqlite_persistence(monkeypatch, tmp_path):
     checkpoint_module = pytest.importorskip(
         "langgraph.checkpoint.sqlite.aio",
         reason="Install langgraph-checkpoint-sqlite before running SQLite persistence tests",

@@ -2,6 +2,7 @@ import pytest
 
 from src.graph import validator as validator_module
 from src.graph.validator import validator_node
+from src.handlers.budget_overrun_handler import BudgetOverrunHandler
 
 
 def _budget_state():
@@ -120,6 +121,10 @@ async def test_validator_collects_all_registered_user_decision_handlers(monkeypa
         "interrupt",
         lambda payload: captured_payloads.append(payload),
     )
+    # 定稿总结语生成依赖真实 LLM，这里短路掉以保持单元测试纯净快速。
+    async def _stub_summary(state, itinerary, budget):
+        return None
+    monkeypatch.setattr(validator_module, "_generate_summary_text", _stub_summary)
 
     result = await validator_node(_budget_state())
 
@@ -159,3 +164,17 @@ async def test_validator_skips_user_decision_handlers_when_hard_validation_fails
     assert result["validation_report"]["passed"] is False
     assert FirstDecisionHandler.checked == 0
     assert captured_payloads == []
+
+
+def test_budget_overrun_handler_uses_uncommitted_draft_budget():
+    state = _budget_state()
+    state["budget"] = None
+    state["draft_budget"] = {
+        "total": 1300.0,
+        "detail": {"transport": 300.0, "hotel": 600.0, "food": 300.0, "tickets": 100.0},
+    }
+
+    handler = BudgetOverrunHandler()
+
+    assert handler.should_trigger(state) is True
+    assert handler.build_payload(state)["extra"]["current_budget"] == state["draft_budget"]

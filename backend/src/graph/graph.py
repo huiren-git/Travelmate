@@ -29,8 +29,7 @@ _async_checkpointer_context = None
 
 # 根据 Supervisor 写入的 next_node 决定下一个工作节点。
 def supervisor_router(state: TravelAgentState) -> Literal[
-    "itinerary_agent",
-    "budget_agent",
+    "pre_fetcher",
     "__end__",
 ]:
     if state.get("is_finished", False):
@@ -41,7 +40,24 @@ def supervisor_router(state: TravelAgentState) -> Literal[
         logger.warning("Unknown next_node=%s; ending workflow.", next_node)
         return "__end__"
 
-    logger.info("supervisor_router -> %s", next_node)
+    logger.info("supervisor_router -> pre_fetcher (worker=%s)", next_node)
+    return "pre_fetcher"
+
+
+# Supervisor 已完成自然语言参数提取后，预取数据，再进入其选定的工作节点。
+def pre_fetcher_router(state: TravelAgentState) -> Literal[
+    "itinerary_agent",
+    "budget_agent",
+    "__end__",
+]:
+    if state.get("is_finished", False):
+        return "__end__"
+
+    next_node = state.get("next_node") or "__end__"
+    if next_node not in {*WORKER_NODES, "__end__"}:
+        logger.warning("Unknown next_node=%s after pre-fetch; ending workflow.", next_node)
+        return "__end__"
+    logger.info("pre_fetcher_router -> %s", next_node)
     return next_node
 
 
@@ -55,7 +71,8 @@ def validator_router(state: TravelAgentState) -> Literal[
         return "__end__"
 
     attempts = state.get("validation_attempts", 0)
-    if attempts >= 3:
+    # 预算自动微调闭环期间豁免 attempts 上限：循环由 budget_auto_retry<=2 与 is_finished 共同约束，不会死循环。
+    if attempts >= 3 and not state.get("auto_reduce_budget"):
         logger.warning("Validation reached max attempts; ending workflow.")
         return "__end__"
 
@@ -120,11 +137,18 @@ def build_graph(checkpoint_path: Optional[str] = None, checkpointer: Optional[An
     builder.add_node("budget_agent", budget_agent_node)
     builder.add_node("validator", validator_node)
 
-    builder.add_edge(START, "pre_fetcher")
-    builder.add_edge("pre_fetcher", "supervisor")
+    builder.add_edge(START, "supervisor")
     builder.add_conditional_edges(
         "supervisor",
         supervisor_router,
+        {
+            "pre_fetcher": "pre_fetcher",
+            "__end__": END,
+        },
+    )
+    builder.add_conditional_edges(
+        "pre_fetcher",
+        pre_fetcher_router,
         {
             "itinerary_agent": "itinerary_agent",
             "budget_agent": "budget_agent",

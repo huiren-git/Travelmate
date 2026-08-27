@@ -7,7 +7,6 @@ from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Header, Query, Response
-from pydantic import BaseModel
 
 from src.api.v1.chat import _active_runs, _jsonable
 from src.core.exceptions import (
@@ -18,36 +17,20 @@ from src.core.exceptions import (
     raise_validation_error,
 )
 from src.graph.graph import get_graph_async
+from src.models.common import ApiResponse
+from src.models.sessions import (
+    SessionItem,
+    SessionListData,
+    SessionListResponse,
+    SessionSnapshotData,
+)
+# 读取 snapshot 时按墙钟 now 实时推导行程项状态（仅把"默认 upcoming 且已过去"
+# 的项覆写为 completed，不触碰显式 completed/ongoing）。复用 itinerary_agent 的纯函数，
+# 避免重复逻辑。sessions 已通过 graph 间接加载 agents，无循环 import 风险。
+from src.agents.itinerary_agent import _apply_time_based_status
 
 router = APIRouter(prefix="/sessions")
 logger = logging.getLogger("travelmate.api.sessions")
-
-
-class SessionItem(BaseModel):
-    """历史会话列表中的单条行程摘要。"""
-
-    thread_id: str
-    destination: Optional[str] = None
-    start_date: Optional[str] = None
-    duration: Optional[int] = None
-    status: Literal["planning", "confirmed", "completed", "deleted"]
-    last_updated: str
-
-
-class SessionListData(BaseModel):
-    """历史会话列表分页数据。"""
-
-    sessions: List[SessionItem]
-    next_cursor: Optional[str]
-    has_more: bool
-
-
-class SessionListResponse(BaseModel):
-    """历史会话列表统一响应结构。"""
-
-    code: int
-    message: str
-    data: SessionListData
 
 
 # 返回当前 UTC 时间的 ISO 8601 文本。
@@ -124,9 +107,11 @@ def _ensure_owner(values: Dict[str, Any], user_id: Optional[str]) -> None:
 
 
 # 根据出发日期和完成标记推断行程状态。
-def _session_status(values: Dict[str, Any]) -> Literal["planning", "confirmed", "completed", "deleted"]:
+def _session_status(values: Dict[str, Any]) -> Literal["planning", "confirmed", "completed", "failed", "deleted"]:
     if values.get("deleted_at"):
         return "deleted"
+    if values.get("terminal_status") == "failed":
+        return "failed"
     start_date = values.get("start_date")
     if isinstance(start_date, str):
         try:
@@ -231,18 +216,30 @@ def _snapshot_metadata(snapshot: Any, include_raw_traces: bool) -> Dict[str, Any
 
 
 # 将 checkpoint 快照组装为说明书约定的快照响应。
-def _snapshot_response(session_id: str, snapshot: Any, include_raw_traces: bool) -> Dict[str, Any]:
+def _snapshot_response(
+    session_id: str,
+    snapshot: Any,
+    include_raw_traces: bool,
+) -> SessionSnapshotData:
     values = getattr(snapshot, "values", None) or {}
-    return {
-        "session_id": session_id,
-        "state": {
+    blackboard = _jsonable(values)
+    # 读取时按墙钟 now 重新推导行程项状态：仅把"默认 upcoming 且已过去"的项覆写为
+    # completed，不触碰显式 completed/ongoing（硬边界）。
+    # _jsonable 已生成全新容器，此处 in-place 改写不会污染 checkpoint / 缓存。
+    # datetime.now() 为服务器本地墙钟，与 _item_datetime 产出的本地 wall-clock 时间同帧。
+    itinerary = blackboard.get("daily_itinerary") if isinstance(blackboard, dict) else None
+    if isinstance(itinerary, list):
+        _apply_time_based_status(itinerary, datetime.now())
+    return SessionSnapshotData(
+        session_id=session_id,
+        state={
             "task_list": _task_list(snapshot),
-            "blackboard": _jsonable(values),
+            "blackboard": blackboard,
         },
-        "graph_structure": _graph_structure(),
-        "metadata": _snapshot_metadata(snapshot, include_raw_traces),
-        "created_at": _snapshot_last_updated(snapshot),
-    }
+        graph_structure=_graph_structure(),
+        metadata=_snapshot_metadata(snapshot, include_raw_traces),
+        created_at=_snapshot_last_updated(snapshot),
+    )
 
 
 # 枚举 checkpointer 中已经存在的 thread_id。
@@ -323,7 +320,7 @@ async def _mark_thread_deleted(graph: Any, session_id: str) -> None:
 
 
 # 返回指定会话的完整 checkpoint 快照。
-@router.get("/{session_id}/snapshot")
+@router.get("/{session_id}/snapshot", response_model=ApiResponse[SessionSnapshotData])
 async def get_session_snapshot(
     session_id: str,
     include_raw_traces: bool = Query(default=False),
@@ -338,7 +335,11 @@ async def get_session_snapshot(
     if values.get("deleted_at"):
         raise_session_not_found(thread_id=session_id)
     _ensure_owner(values, user_id)
-    return _snapshot_response(session_id, snapshot, include_raw_traces)
+    return ApiResponse(
+        code=200,
+        message="获取成功",
+        data=_snapshot_response(session_id, snapshot, include_raw_traces),
+    )
 
 
 # 返回当前用户的历史行程会话列表。

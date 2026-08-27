@@ -5,6 +5,10 @@ export function getProfileActionConfirmTitle(action: DataAction) {
 }
 
 export function getProfileActionConfirmContent(action: DataAction) {
+  if (action.id === 'clear-history') {
+    return '将删除当前账号下保存的全部历史行程记录，删除后无法恢复。'
+  }
+
   if (action.id === 'logout-account') {
     return '账号注销后将无法继续使用当前身份登录 Travelmate。'
   }

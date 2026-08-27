@@ -2,17 +2,20 @@
 
 import json
 import logging
-from typing import Any, Dict
+from datetime import date, timedelta
+from typing import Any, Dict, Optional
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.types import interrupt
 
 from src.handlers.registry import _handler_registry
+from src.handlers.budget_overrun_handler import BudgetOverrunHandler
 from src.graph.state import TravelAgentState
 from src.utils.llm_utils import call_llm, ensure_dict, extract_json, message_content
 from src.utils.state_utils import (
     get_budget_level,
     get_budget,
+    get_draft_budget,
     get_daily_itinerary,
     get_draft_daily_itinerary,
     get_duration,
@@ -35,6 +38,7 @@ MAX_SOFT_VALIDATION_ATTEMPTS = 2
 SOFT_SCORE_THRESHOLD = 80
 
 
+# 获取用于 Validator 的 LLM 实例，温度固定为 0.0
 def get_validator_llm():
     """
     获取用于 Validator 的 LLM 实例，温度固定为 0.0
@@ -42,6 +46,192 @@ def get_validator_llm():
     from src.agents.base import get_llm
 
     return get_llm(temperature=0.0)
+
+
+# 获取用于生成定稿总结语的 LLM 实例，温度 0.7 以获得更有温度的文案。
+def get_summary_llm():
+    from src.agents.base import get_llm
+
+    return get_llm(temperature=0.7)
+
+
+# 收集每日行程的亮点景点名，供总结语 prompt 使用。
+def _collect_daily_attraction_names(itinerary: list) -> list[Dict[str, Any]]:
+    daily_attractions: list[Dict[str, Any]] = []
+    for day in itinerary:
+        if not isinstance(day, dict):
+            continue
+        names = [
+            item.get("activity", "")
+            for item in (day.get("items") or [])
+            if isinstance(item, dict) and item.get("activity")
+        ]
+        daily_attractions.append({"day": day.get("day"), "attractions": names})
+    return daily_attractions
+
+
+# 构造要求 LLM 生成定稿总结语的消息列表。
+def _build_summary_messages(
+    state: TravelAgentState,
+    itinerary: list,
+    budget: Dict[str, Any],
+) -> list[Any]:
+    destination = get_destination(state)
+    duration = get_duration(state)
+    budget_level = get_budget_level(state)
+    saving_tips = budget.get("saving_tips") if isinstance(budget, dict) else None
+    daily_attractions = _collect_daily_attraction_names(itinerary)
+
+    system_prompt = f"""你是 TravelMate 的行程文案撰写助手。请基于以下已定稿的行程信息，生成一段面向用户的总结语。
+
+要求：
+- 语气温暖、有感染力，像一位懂旅行的朋友在介绍这次旅程。
+- 控制在 80-150 字以内，写成一段话，不要分点、不要使用 Markdown 符号。
+- 自然地融入目的地、天数、每日亮点景点、预算等级和省钱小贴士。
+- 不要逐天罗列所有景点，挑每天的亮点即可。
+- 不要出现"总结语""文案""好的"等元描述或寒暄，直接输出文案本身。
+
+行程信息：
+- 目的地：{destination}
+- 天数：{duration}
+- 预算等级：{budget_level}
+- 每日景点：{json.dumps(daily_attractions, ensure_ascii=False)}
+- 省钱建议：{json.dumps(saving_tips, ensure_ascii=False) if saving_tips else "无"}
+""".strip()
+
+    return [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content="请生成这次行程的总结语。"),
+    ]
+
+
+# 调用 LLM 生成定稿后的总结语文案，异常时返回 None 不影响主流程。
+async def _generate_summary_text(
+    state: TravelAgentState,
+    itinerary: list,
+    budget: Dict[str, Any],
+) -> Optional[str]:
+    try:
+        llm = get_summary_llm()
+        response = await call_llm(llm, _build_summary_messages(state, itinerary, budget))
+        text = message_content(response).strip()
+        return text or None
+    except Exception:
+        logger.exception("Failed to generate summary_text")
+        return None
+
+
+# 出发日期未由用户在结构化表单（或对话）中显式指定时，系统默认从明天开始规划。
+# 为避免“默认今天导致首日活动过早、被时间锁标为已完成”的困惑，在首条行程总结语后
+# 追加一句提示，告知默认起点与修改入口。仅在 PLAN 模式的首次生成（尚无行程）时追加。
+def _default_start_date_hint(state: TravelAgentState) -> Optional[str]:
+    if state.get("start_date") is not None:
+        return None
+    if get_plan_mode(state) != "plan":
+        return None
+    if get_daily_itinerary(state):
+        # 非首次生成（已有行程），不再重复提示
+        return None
+    tomorrow = date.today() + timedelta(days=1)
+    formatted = f"{tomorrow.year}年{tomorrow.month}月{tomorrow.day}日"
+    return (
+        f"\n\n（已为你从明天（{formatted}）开始规划。"
+        f"如需指定出发日期，可在「计划清单」中调整。）"
+    )
+
+
+# 把行程压平成 {date: {time: activity}}，用于比较 REPLAN 前后差异。
+def _itinerary_index(itinerary: list) -> Dict[str, Dict[str, str]]:
+    index: Dict[str, Dict[str, str]] = {}
+    for day in itinerary or []:
+        if not isinstance(day, dict):
+            continue
+        date_text = str(day.get("date") or "")
+        for item in day.get("items") or []:
+            if isinstance(item, dict):
+                index.setdefault(date_text, {})[str(item.get("time") or "")] = str(item.get("activity") or "")
+    return index
+
+
+# 计算 REPLAN 前后的实际变化，供反馈语描述“到底改了什么”。
+def _diff_itinerary(old: list, new: list) -> Dict[str, Any]:
+    old_index, new_index = _itinerary_index(old), _itinerary_index(new)
+    removed, added, replaced, changed_dates = [], [], [], []
+    for date_text in sorted(set(old_index) | set(new_index)):
+        old_day, new_day = old_index.get(date_text, {}), new_index.get(date_text, {})
+        if old_day == new_day:
+            continue
+        changed_dates.append(date_text)
+        old_names, new_names = set(old_day.values()), set(new_day.values())
+        for time_text, activity in old_day.items():
+            if activity in new_names:
+                continue
+            counterpart = new_day.get(time_text)
+            if counterpart and counterpart not in old_names:
+                replaced.append({"date": date_text, "time": time_text, "from": activity, "to": counterpart})
+            else:
+                removed.append({"date": date_text, "time": time_text, "activity": activity})
+        for time_text, activity in new_day.items():
+            if activity in old_names:
+                continue
+            if any(e["date"] == date_text and e["to"] == activity for e in replaced):
+                continue
+            added.append({"date": date_text, "time": time_text, "activity": activity})
+    return {"changed_dates": changed_dates, "replaced": replaced, "removed": removed,
+            "added": added, "empty": not (replaced or removed or added)}
+
+
+# LLM 不可用时的确定性兜底文案，避免前端退化成“行程已生成，已同步到计划面板。”
+def _fallback_replan_feedback(changes: Dict[str, Any]) -> str:
+    if changes.get("empty"):
+        return "这次没有改动你的行程，可能相关时段已经过去或不在本次行程范围内，你可以再告诉我想调整哪一天。"
+    parts = [f"把「{e['from']}」换成了「{e['to']}」" for e in changes.get("replaced", [])[:3]]
+    parts += [f"取消了「{e['activity']}」" for e in changes.get("removed", [])[:2]]
+    parts += [f"新增了「{e['activity']}」" for e in changes.get("added", [])[:2]]
+    return "已按你的要求调整：" + "，".join(parts) + "，其余安排保持不变。"
+
+
+# 构造要求 LLM 生成 REPLAN 反馈语的消息。
+def _build_replan_feedback_messages(
+    state: TravelAgentState,
+    changes: Dict[str, Any],
+    itinerary: list,
+) -> list[Any]:
+    scope = state.get("replan_scope") or {}
+    instruction = str(scope.get("instruction") or "").strip()
+    scope_brief = {key: value for key, value in scope.items() if key != "instruction"}
+    system_prompt = f"""你是 TravelMate 的行程调整反馈助手。用户刚提出了一条调整行程的指令，行程已按指令改好。
+请写一段面向用户的确认反馈。
+
+要求：
+- 直接回应用户这句指令，说清「改了什么」以及「改完之后的体验是什么样」。
+- 只描述 changes 里真实发生的变化；changes.empty 为 true 时，坦诚说明本轮没有改动及原因。
+- 不要写成行程总结语，不要罗列整段行程，不要逐天复述景点。
+- 不要出现"系统""后端""字段"等技术词，也不要"好的""以下是"这类寒暄和元描述。
+- 60-120 字，一段话，不要 Markdown，不要分点。
+
+用户指令：{instruction or "（未捕获到原始指令）"}
+授权范围：{json.dumps(scope_brief, ensure_ascii=False)}
+实际变化：{json.dumps(changes, ensure_ascii=False)}
+调整后各天亮点：{json.dumps(_collect_daily_attraction_names(itinerary), ensure_ascii=False)}
+天气：{json.dumps(state.get("weather_info"), ensure_ascii=False)}
+""".strip()
+    return [SystemMessage(content=system_prompt), HumanMessage(content="请给出这次调整的反馈。")]
+
+
+# 调用 LLM 生成 REPLAN 反馈语，异常时用确定性兜底文案。
+async def _generate_replan_feedback_text(
+    state: TravelAgentState,
+    itinerary: list,
+    changes: Dict[str, Any],
+) -> str:
+    try:
+        llm = get_summary_llm()
+        response = await call_llm(llm, _build_replan_feedback_messages(state, changes, itinerary))
+        return message_content(response).strip() or _fallback_replan_feedback(changes)
+    except Exception:
+        logger.exception("Failed to generate replan feedback text")
+        return _fallback_replan_feedback(changes)
 
 
 def _check_time_overlaps(itinerary: list) -> list:
@@ -137,7 +327,7 @@ def _validate_itinerary(
 
 # 获取当前分支需要校验的行程数据。
 def _itinerary_for_validation(state: TravelAgentState) -> tuple[list, str]:
-    if get_plan_mode(state) == "replan":
+    if state.get("draft_daily_itinerary") is not None:
         return get_draft_daily_itinerary(state), "draft_daily_itinerary"
     return get_daily_itinerary(state), "daily_itinerary"
 
@@ -318,6 +508,15 @@ def _collect_user_decision_requests(state: TravelAgentState) -> list[Dict[str, A
     return requests
 
 
+# 预算超支自动微调判定：5%-20% 区间且未达次数上限时返回 True，应自动削减行程而非中断用户。
+def _budget_auto_retry_needed(state: TravelAgentState) -> bool:
+    try:
+        return BudgetOverrunHandler().should_auto_retry(state)
+    except Exception:
+        logger.exception("Budget auto-retry check failed")
+        return False
+
+
 # 触发用户决策中断，并兼容单个和多个处理器同时命中。
 def _request_user_decision(requests: list[Dict[str, Any]]) -> Any:
     if len(requests) == 1:
@@ -336,7 +535,7 @@ def _request_user_decision(requests: list[Dict[str, Any]]) -> Any:
 
 # 根据当前路由分支执行对应的输出校验。
 async def validator_node(state: TravelAgentState) -> Dict[str, Any]:
-    budget = get_budget(state)
+    budget = get_draft_budget(state) if state.get("draft_budget") is not None else get_budget(state)
     attempts = get_validation_attempts(state) + 1
     hard_attempts = get_hard_validation_attempts(state) + 1
     soft_attempts = get_soft_validation_attempts(state)
@@ -394,7 +593,22 @@ async def validator_node(state: TravelAgentState) -> Dict[str, Any]:
         soft_attempts,
         soft_evaluation,
     )
+    should_run_budget_after_itinerary = (
+        passed
+        and branch == "itinerary_agent"
+        # 任一行程草稿都要进入预算阶段；不能因已有正式预算而跳过对新草稿的预算校验。
+        and state.get("draft_daily_itinerary") is not None
+    )
+    # 预算超支自动微调：5%-20% 区间且未达次数上限时，自动削减行程重算，不中断用户。
+    # 仅在 budget_agent 分支（pass B，budget.total 已落库）判定，避免 pass A 用旧预算误触发。
+    auto_retry = (
+        passed
+        and branch == "budget_agent"
+        and _budget_auto_retry_needed(state)
+    )
     logger.info("Validation attempt=%s branch=%s passed=%s errors=%s", attempts, branch, passed, errors)
+    is_finished = (passed or stopped_by_guard) and not (should_run_budget_after_itinerary or auto_retry)
+    terminal_status = "confirmed" if is_finished and passed else "failed" if is_finished else "running"
     update: Dict[str, Any] = {
         "validation_attempts": attempts,
         "hard_validation_attempts": hard_attempts,
@@ -419,14 +633,56 @@ async def validator_node(state: TravelAgentState) -> Dict[str, Any]:
                 "max_soft": MAX_SOFT_VALIDATION_ATTEMPTS,
             },
         },
-        "is_finished": passed or stopped_by_guard,
+        "is_finished": is_finished,
+        "terminal_status": terminal_status,
+        "failure_reason": (
+            "; ".join(errors) or "行程质量校验未通过，已停止自动重试"
+        ) if terminal_status == "failed" else None,
     }
-    if branch != "budget_agent" and get_plan_mode(state) == "replan" and passed:
+    if auto_retry:
+        # 进入预算自动微调闭环：路由回 itinerary_agent 自行削减行程，递增计数器、置标记。
+        update["next_node"] = "itinerary_agent"
+        update["auto_reduce_budget"] = True
+        update["budget_auto_retry"] = int(state.get("budget_auto_retry", 0)) + 1
+        update["is_finished"] = False
+    elif should_run_budget_after_itinerary:
+        update["next_node"] = "budget_agent"
+    if branch == "budget_agent" and passed and not auto_retry:
         update["daily_itinerary"] = get_draft_daily_itinerary(state)
+        update["budget"] = budget
         update["draft_daily_itinerary"] = None
-    if passed:
+        update["draft_budget"] = None
+    if passed and not auto_retry:
         user_decision_requests = _collect_user_decision_requests({**state, **update})
         if user_decision_requests:
             update["validation_report"]["user_decision_requests"] = user_decision_requests
-            _request_user_decision(user_decision_requests)
+            # 接住 interrupt() 在 resume 时回灌的用户决策（含 action/hint/note）。
+            # 首次执行此处会暂停（interrupt 抛出），resume 后 validator_node 重入，
+            # LangGraph 对“已 resume 的 interrupt”直接返回 resume 值不再二次暂停，
+            # 故 decision 此刻可拿到值并写入 state，供下游 REPLAN 读取。不会死循环。
+            decision = _request_user_decision(user_decision_requests)
+            if decision:
+                update["user_decision"] = decision
+    # 定稿后生成当轮回复文案：validator_router 在 is_finished=True 时直通 __end__，
+    # 故同一轮不会重复进入 validator，可安全地在每个完成轮重新生成。
+    # 若上方触发了 user_decision interrupt，此处不会执行（interrupt 已抛出），等 resume 后重入再生成。
+    # PLAN 模式生成行程总结语；REPLAN 模式基于 old(get_daily_itinerary(state)) vs
+    # new(get_daily_itinerary(merged_state)) 的 diff 生成“指令反馈语”。
+    # 二者都写入 summary_text（语义已放宽为“本轮回复文案”）与 messages，前端无需改动。
+    if terminal_status == "confirmed":
+        merged_state = {**state, **update}
+        final_itinerary = get_daily_itinerary(merged_state)
+        if get_plan_mode(state) == "replan":
+            changes = _diff_itinerary(get_daily_itinerary(state), final_itinerary)
+            update["replan_changes"] = changes
+            reply_text = await _generate_replan_feedback_text(merged_state, final_itinerary, changes)
+        else:
+            reply_text = await _generate_summary_text(merged_state, final_itinerary, get_budget(merged_state))
+        if reply_text:
+            # 未显式指定出发日期时，于首条回复追加“默认明天”提示（方案②）
+            hint = _default_start_date_hint(state)
+            if hint:
+                reply_text = reply_text + hint
+            update["summary_text"] = reply_text
+            update["messages"] = [AIMessage(content=reply_text)]
     return update

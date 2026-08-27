@@ -9,6 +9,8 @@ from typing import Any, Dict
 from fastapi import APIRouter
 
 from src.config.settings import settings
+from src.models.common import ApiResponse
+from src.models.health import HealthData
 import src.services.redis_client as redis_service
 
 router = APIRouter()
@@ -128,7 +130,7 @@ def _overall_status(components: Dict[str, Dict[str, Any]]) -> str:
 
 
 # 返回应用和依赖组件的健康检查结果。
-@router.get("/health")
+@router.get("/health", response_model=ApiResponse[HealthData])
 async def health_check():
     components = {
         "redis": await _check_redis(),
@@ -136,14 +138,14 @@ async def health_check():
     }
     status = _overall_status(components)
 
-    return {
-        "code": 200,
-        "message": "服务运行正常" if status == "healthy" else "部分组件异常",
-        "data": {
-            "status": status,
-            "service": settings.app_name,
-            "version": settings.app_version,
-            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "components": components,
-        }
-    }
+    return ApiResponse(
+        code=200,
+        message="服务运行正常" if status == "healthy" else "部分组件异常",
+        data=HealthData(
+            status=status,
+            service=settings.app_name,
+            version=settings.app_version,
+            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            components=components,
+        ),
+    )

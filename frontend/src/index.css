@@ -1,5 +1,8 @@
 @import 'tailwindcss';
 
+/* 类驱动暗色模式：任意祖先带 .dark 即激活 dark: 变体 */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --tm-primary: #0071eb;
   --tm-primary-2: #1b8cd1;

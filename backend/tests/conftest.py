@@ -4,6 +4,18 @@ import pytest
 from langchain_core.messages import AIMessage
 
 
+@pytest.fixture(autouse=True)
+def set_test_trace_id():
+    """Provide trace context for tests that call traced async graph nodes directly."""
+    from src.core.tracing import reset_trace_id, set_trace_id
+
+    token = set_trace_id("trc_test")
+    try:
+        yield
+    finally:
+        reset_trace_id(token)
+
+
 class UnitValidatorLLM:
     """为不需要真实 LLM 的工作流测试提供高分软评估。"""
 

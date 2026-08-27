@@ -15,9 +15,9 @@ export function ProfileInfoCard({ profile, stats }: ProfileInfoCardProps) {
         <div className="flex min-w-0 items-center gap-5">
           <Avatar size={88} src={profile.avatarUrl} className="bg-blue-50 text-blue-600" />
           <div className="min-w-0">
-            <div className="text-[26px] font-bold leading-tight text-slate-900">{profile.nickname}</div>
-            <div className="mt-2 text-[14px] text-slate-500">@{profile.username}</div>
-            <div className="mt-1 flex items-center gap-1 text-[14px] text-slate-500">
+            <div className="text-[26px] font-bold leading-tight text-slate-900 dark:text-slate-100">{profile.nickname}</div>
+            <div className="mt-2 text-[14px] text-slate-500 dark:text-slate-400">@{profile.username}</div>
+            <div className="mt-1 flex items-center gap-1 text-[14px] text-slate-500 dark:text-slate-400">
               <EnvironmentOutlined className="text-blue-500" />
               <span>{profile.currentCity}</span>
             </div>

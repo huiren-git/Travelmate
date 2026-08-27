@@ -10,15 +10,42 @@ type ProfileOutletPanelProps = {
 }
 
 export function ProfileOutletPanel({ outletKey }: ProfileOutletPanelProps) {
-  const { preferences, profile, setPreferences, setSettings, settings } = useOutletContext<ProfilePageData>()
+  const {
+    preferences,
+    profile,
+    setPreferences,
+    isLoadingPreferences,
+    isSavingPreferences,
+    preferencesError,
+    savePreferences,
+    dismissPreferencesError,
+    histories,
+    isLoadingHistories,
+    historiesError,
+    clearAllHistorySessions,
+    exportAllHistory,
+  } = useOutletContext<ProfilePageData>()
 
-  if (outletKey === 'settings') {
-    return <SettingsOutlet profile={profile} settings={settings} setSettings={setSettings} />
-  }
+  const panel =
+    outletKey === 'settings' ? (
+      <SettingsOutlet
+        profile={profile}
+        onClearHistory={clearAllHistorySessions}
+        onExportHistory={exportAllHistory}
+      />
+    ) : outletKey === 'history' ? (
+      <TravelHistoryOutlet histories={histories} isLoading={isLoadingHistories} error={historiesError} />
+    ) : (
+      <PreferencesOutlet
+        preferences={preferences}
+        setPreferences={setPreferences}
+        isLoading={isLoadingPreferences}
+        isSaving={isSavingPreferences}
+        error={preferencesError}
+        onSave={savePreferences}
+        onDismissError={dismissPreferencesError}
+      />
+    )
 
-  if (outletKey === 'history') {
-    return <TravelHistoryOutlet />
-  }
-
-  return <PreferencesOutlet preferences={preferences} setPreferences={setPreferences} />
+  return <div className="h-full min-h-0">{panel}</div>
 }

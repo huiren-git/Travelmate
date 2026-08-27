@@ -6,6 +6,8 @@ export type BudgetPreference = '经济实惠' | '舒适出行' | '奢华体验'
 
 export type TransportPreference = '火车' | '飞机' | '自驾'
 
+export type DietaryPreference = '爱吃辣' | '爱吃甜' | '当地特色' | '清淡饮食' | '素食优先' | '海鲜偏好'
+
 export type ThemePreference = '浅色' | '深色' | '跟随系统'
 
 export type LanguagePreference = '中文' | '英文'
@@ -22,6 +24,7 @@ export type PreferenceSettings = {
   travelTypes: TravelType[]
   budgetPreference: BudgetPreference
   transportPreference: TransportPreference
+  dietaryPreferences: DietaryPreference[]
   customPreferences: string[]
 }
 

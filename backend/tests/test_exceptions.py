@@ -19,6 +19,7 @@ from src.core.exceptions import (
     raise_session_not_found,
     setup_exception_handlers,
 )
+from src.models.common import ErrorResponse
 
 
 # 验证业务状态码存在默认消息和 HTTP 状态映射。
@@ -84,3 +85,24 @@ def test_request_validation_error_handler_uses_business_code():
     body = response.json()
     assert body["code"] == 40002
     assert body["message"] == ERROR_MESSAGES[40002]
+
+
+def test_app_exception_handler_returns_error_response_shape():
+    app = FastAPI()
+    setup_exception_handlers(app)
+
+    @app.get("/forbidden")
+    async def forbidden():
+        raise AppException(
+            code=CODE_FORBIDDEN_RESOURCE,
+            details={"error": "owner mismatch"},
+        )
+
+    response = TestClient(app).get("/forbidden")
+
+    assert response.status_code == 403
+    assert response.json() == ErrorResponse(
+        code=CODE_FORBIDDEN_RESOURCE,
+        message=ERROR_MESSAGES[CODE_FORBIDDEN_RESOURCE],
+        details={"error": "owner mismatch"},
+    ).model_dump(exclude_none=True)

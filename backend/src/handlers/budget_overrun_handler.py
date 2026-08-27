@@ -8,7 +8,7 @@ class BudgetOverrunHandler(InterruptHandler):
       """
       判断是否触发预算超支中断
       """
-      budget = state.get("budget")
+      budget = state.get("draft_budget") or state.get("budget")
       max_allowed = state.get("budget_max_allowed")
       if not budget or not max_allowed:
           return False
@@ -31,11 +31,35 @@ class BudgetOverrunHandler(InterruptHandler):
       # 3. 超过 20%：直接中断
       return True
 
+    def overrun_ratio(self, state: TravelAgentState) -> Optional[float]:
+        """返回当前预算/上限的比值；缺预算或上限时为 None。"""
+        budget = state.get("draft_budget") or state.get("budget")
+        max_allowed = state.get("budget_max_allowed")
+        if not budget or not max_allowed:
+            return None
+        try:
+            return float(budget["total"]) / float(max_allowed)
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+
+    def should_auto_retry(self, state: TravelAgentState) -> bool:
+        """
+        5%-20% 超支区间且自动微调次数未达上限时返回 True，
+        表示应由系统自动削减行程并重算，而不是直接中断用户。
+        """
+        ratio = self.overrun_ratio(state)
+        if ratio is None:
+            return False
+        if not (1.05 <= ratio < 1.20):
+            return False
+        auto_retry_count = state.get("budget_auto_retry", 0)
+        return auto_retry_count < 2
+
     def build_payload(self, state: TravelAgentState) -> Dict:
         """
         构建预算超支中断的 payload，包含当前预算、超支百分比和处理选项
         """
-        budget = state["budget"]
+        budget = state.get("draft_budget") or state["budget"]
         max_allowed = state.get("budget_max_allowed")
         overrun_percent = round((budget["total"] / max_allowed - 1) * 100, 1)
         return {

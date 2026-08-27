@@ -11,14 +11,14 @@ if str(BACKEND_ROOT) not in sys.path:
 
 
 # 构造图工作流测试使用的初始 State。
-def _initial_state(next_node="itinerary_agent"):
+def _initial_state(next_node="itinerary_agent", destination="北京"):
     from langchain_core.messages import HumanMessage
 
     return {
         "messages": [HumanMessage(content="帮我规划北京2日游，预算中等")],
         "user_id": "test-user",
         "thread_id": "test-thread",
-        "destination": "北京",
+        "destination": destination,
         "origin": "上海",
         "start_date": "2026-08-10",
         "duration": 2,
@@ -125,9 +125,13 @@ def _fake_supervisor(calls, next_node):
     # 执行伪造 Supervisor 节点并返回指定路由。
     async def node(state):
         calls.append("supervisor")
-        assert state["weather_info"]["city"] == "北京"
-        assert len(state["fetched_attractions"]) == 2
-        return {"next_node": next_node, "current_mode": "plan"}
+        assert state["weather_info"] is None
+        assert state["fetched_attractions"] is None
+        return {
+            "next_node": next_node,
+            "current_mode": "plan",
+            "destination": state.get("destination") or "北京",
+        }
 
     return node
 
@@ -146,25 +150,25 @@ def _build_graph_with_fakes(monkeypatch, tmp_path, calls, next_node):
 
 
 # 验证 graph 在行程分支中能按顺序推进到 Validator。
-def test_graph_workflow_generates_itinerary_without_real_llm(monkeypatch, tmp_path):
+def test_graph_workflow_generates_itinerary_then_budget_without_real_llm(monkeypatch, tmp_path):
     calls = []
     graph_module, graph = _build_graph_with_fakes(monkeypatch, tmp_path, calls, "itinerary_agent")
 
     final_state = asyncio.run(
         graph.ainvoke(
-            _initial_state("itinerary_agent"),
+            _initial_state("itinerary_agent", destination=None),
             config={"configurable": {"thread_id": "test-itinerary-thread"}},
         )
     )
 
-    assert calls == ["pre_fetcher", "supervisor", "itinerary_agent"]
+    assert calls == ["supervisor", "pre_fetcher", "itinerary_agent", "budget_agent"]
     assert final_state["is_finished"] is True
-    assert final_state["validation_attempts"] == 1
+    assert final_state["validation_attempts"] == 2
     assert final_state["validation_report"]["passed"] is True
-    assert final_state["next_node"] == "itinerary_agent"
+    assert final_state["next_node"] == "budget_agent"
     assert final_state["daily_itinerary"][0]["items"]
-    assert final_state["budget"] is None
-    assert graph_module.validator_router({"is_finished": True, "next_node": "itinerary_agent"}) == "__end__"
+    assert final_state["budget"]["total"] == 1200.0
+    assert graph_module.validator_router({"is_finished": True, "next_node": "budget_agent"}) == "__end__"
 
 
 # 验证 graph 在预算分支中能按顺序推进到 Validator。
@@ -179,7 +183,7 @@ def test_graph_workflow_generates_budget_without_real_llm(monkeypatch, tmp_path)
         )
     )
 
-    assert calls == ["pre_fetcher", "supervisor", "budget_agent"]
+    assert calls == ["supervisor", "pre_fetcher", "budget_agent"]
     assert final_state["is_finished"] is True
     assert final_state["validation_attempts"] == 1
     assert final_state["validation_report"]["passed"] is True
@@ -194,7 +198,8 @@ def test_graph_routers(monkeypatch, tmp_path):
     graph_module, _ = _build_graph_with_fakes(monkeypatch, tmp_path, calls, "itinerary_agent")
 
     assert graph_module.supervisor_router({"is_finished": True, "next_node": "itinerary_agent"}) == "__end__"
-    assert graph_module.supervisor_router({"is_finished": False, "next_node": "budget_agent"}) == "budget_agent"
+    assert graph_module.supervisor_router({"is_finished": False, "next_node": "budget_agent"}) == "pre_fetcher"
+    assert graph_module.pre_fetcher_router({"is_finished": False, "next_node": "budget_agent"}) == "budget_agent"
     assert graph_module.validator_router({"is_finished": False, "next_node": "itinerary_agent", "validation_attempts": 0}) == "itinerary_agent"
     assert graph_module.validator_router({"is_finished": False, "next_node": "budget_agent", "validation_attempts": 0}) == "budget_agent"
     assert graph_module.validator_router({"is_finished": False, "next_node": "budget_agent", "validation_attempts": 3}) == "__end__"

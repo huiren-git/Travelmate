@@ -113,8 +113,10 @@ def _budget_payload():
 # 验证 Supervisor 能路由到 itinerary_agent 并完整推进到 Validator。
 @pytest.mark.asyncio
 async def test_supervisor_routes_to_itinerary_and_workflow_reaches_validator(monkeypatch):
+    from src.agents import budget_agent as budget_module
     from src.agents import itinerary_agent as itinerary_module
     from src.agents import supervisor as supervisor_module
+    from src.graph import validator as validator_module
     from src.graph.graph import build_graph
 
     routing_llm = FakeJsonLLM(
@@ -128,8 +130,25 @@ async def test_supervisor_routes_to_itinerary_and_workflow_reaches_validator(mon
         }
     )
     itinerary_llm = FakeJsonLLM(_itinerary_payload())
+    budget_llm = FakeJsonLLM(_budget_payload())
+    validator_llm = FakeJsonLLM(
+        {
+            "score": 92,
+            "passed": True,
+            "reason": "行程结构合理",
+            "issues": [],
+            "suggestions": [],
+        }
+    )
+
+    async def fake_fetch_activity_image_url(destination, activity):
+        return "https://amap.example.com/place.jpg"
+
     monkeypatch.setattr(supervisor_module, "get_supervisor_llm", lambda: routing_llm)
     monkeypatch.setattr(itinerary_module, "get_itinerary_llm", lambda: itinerary_llm)
+    monkeypatch.setattr(itinerary_module, "_fetch_activity_image_url", fake_fetch_activity_image_url)
+    monkeypatch.setattr(budget_module, "get_budget_llm", lambda: budget_llm)
+    monkeypatch.setattr(validator_module, "get_validator_llm", lambda: validator_llm)
 
     graph = build_graph(":memory:")
     final_state = await graph.ainvoke(
@@ -139,12 +158,13 @@ async def test_supervisor_routes_to_itinerary_and_workflow_reaches_validator(mon
 
     assert routing_llm.calls, "Supervisor should call the routing LLM"
     assert itinerary_llm.calls, "Itinerary agent should call its LLM"
-    assert final_state["next_node"] == "itinerary_agent"
+    assert budget_llm.calls, "Plan workflow should estimate budget after itinerary validation"
+    assert final_state["next_node"] == "budget_agent"
     assert final_state["plan_mode"] == "plan"
     assert final_state["destination"] == "北京"
     assert final_state["duration"] == 3
     assert final_state["daily_itinerary"]
-    assert final_state["budget"] is None
+    assert final_state["budget"]["level"] == "mid"
     assert final_state["validation_report"]["passed"] is True
     assert final_state["is_finished"] is True
 

@@ -14,8 +14,15 @@ class ItineraryItem(TypedDict):
     activity: str                   # "故宫博物院"
     duration: str                   # "3h"
     address: Optional[str]          # 详细地址
+    image_url: str                  # 来自景点数据源的真实图片 URL
     status: Literal["completed", "ongoing", "upcoming"]  # 行程状态（增量修改的关键锁）
     tips: Optional[str]             # 购票/避坑提示
+    # ---- 定价字段（由 cost_enrich 写入，前端展示可直接消费）----
+    cost: Optional[float]           # 该项实际花费（已含 travelers 倍数）
+    cost_category: Optional[Literal["transport", "hotel", "food", "tickets", "other"]]
+    poi_ref: Optional[str]          # 命中的 POI 名称/ID，用于精确匹配与前端跳转
+    location: Optional[str]         # "lng,lat"，供方法2 计算相邻 item 距离
+    leg_transport_cost: Optional[float]  # 到达该 item 的交通腿费（方法2）
 
 
 class DayPlan(TypedDict):
@@ -89,12 +96,26 @@ class TravelAgentState(TypedDict):
     budget: Optional[BudgetDetail]
     """已生效的预算明细"""
 
+    budget_max_allowed: Optional[float]
+    """用户预算金额上限（元）：文本由 supervisor 抽取写入，缺失时 budget_agent 按 budget_level 推导兜底；BudgetOverrunHandler 据此判定是否触发超支中断。"""
+
+    budget_auto_retry: int
+    """超支自动微调计数器（预留字段，当前无实际削减逻辑）。"""
+
+    budget_dirty: bool
+    """标记本轮 budget_max_allowed 是否发生变化（supervisor 抽取到与旧值不同的值时置 True）；
+    validator 据其在 replan 模式下也重跑 budget_agent 重翻 total，budget_agent 重算后清回 False，避免死循环。"""
+
+    auto_reduce_budget: bool
+    """标记本轮因预算超支(5%-20%区间)进入自动微调闭环：validator 置 True 后路由回 itinerary_agent 自行削减行程，
+    budget_agent 重算 total 后清回 False；计数器 budget_auto_retry 封顶 2 次保证不死循环。"""
+
     # ========== 5. 草稿产出（待 Validator 校验后才能生效） ==========
     draft_daily_itinerary: Optional[List[DayPlan]]
-    """REPLAN 模式下生成的行程草稿，通过 Validator 后才能覆写 daily_itinerary"""
+    """所有 PLAN/REPLAN 生成的行程草稿；仅通过全部校验后才能覆写 daily_itinerary。"""
 
     draft_budget: Optional[BudgetDetail]
-    """预算草稿预留字段，通过 Validator 后才能覆写 budget"""
+    """基于行程草稿计算的预算草稿，通过 Validator 后才能覆写 budget。"""
 
     # ========== 6. 流程控制（元认知层） ==========
     plan_mode: Literal["plan", "replan"]
@@ -119,7 +140,28 @@ class TravelAgentState(TypedDict):
     """校验报告 {"errors": [...], "warnings": [...], "score": 85}"""
 
     is_finished: bool
+
+    terminal_status: Literal["running", "confirmed", "failed"]
+    """本轮工作流状态。只有 confirmed 才代表可向用户展示的正式行程。"""
+
+    failure_reason: Optional[str]
+    """终止失败的机器可读/可展示原因；失败草稿保留用于诊断但不会作为正式结果返回。"""
     """流程是否已完成（Supervisor 根据此字段决定是否结束）"""
+
+    user_decision: Optional[Dict[str, Any]]
+    """用户在中断确认环节回灌的决策（含 action/hint/note 等），由 Validator 接住 interrupt() 返回值写入；REPLAN 模式下供 Itinerary Agent 读取以落实用户的修改意图"""
+
+    replan_scope: Optional[Dict[str, Any]]
+    """REPLAN 本轮授权范围，由 Itinerary Agent 解析写入、Validator 生成反馈语时复用。
+    结构：{"kind":"item|day|all","target_dates":["YYYY-MM-DD"],"target_days":[1],
+    "target_item_keys":["YYYY-MM-DD#HH:MM"],"instruction":"用户本轮原话"}。
+    不声明会导致 LangGraph 对 update["replan_scope"] 抛 InvalidUpdateError。"""
+
+    replan_changes: Optional[Dict[str, Any]]
+    """REPLAN 本轮实际差异，由 Validator 计算写入：{"replaced":[],"removed":[],"added":[],"changed_dates":[],"empty":bool}"""
+
+    summary_text: Optional[str]
+    """本轮回复文案：PLAN 模式为行程总结语，REPLAN 模式为针对用户指令的执行反馈语；由 Validator 在 is_finished=True 时一次性生成，随 done 事件返回前端；不参与校验重试循环"""
 
     # ========== 7. 会话管理 ==========
     deleted_at: Optional[str]
