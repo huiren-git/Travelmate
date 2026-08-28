@@ -12,6 +12,8 @@ export type Conversation = {
 }
 
 export type StructuredPreferences = {
+  origin?: string
+  include_return?: boolean
   start_date?: string
   budget_level?: '经济实惠' | '舒适出行' | '奢华体验'
   pace?: '轻松' | '适中' | '紧凑'
@@ -21,6 +23,15 @@ export type StructuredPreferences = {
   hotel_preference?: '经济型酒店' | '舒适型酒店' | '高端酒店' | '特色民宿'
   intercity_transport?: '火车' | '飞机' | '自驾' | '无偏好'
   local_transport?: '步行' | '公共交通' | '打车' | '租车' | '无偏好'
+}
+
+export type TravelLogistics = {
+  origin?: string
+  destination: string
+  includeReturn: boolean
+  intercityLegs: Array<{ kind: string; origin?: string; destination: string; mode: string; cost: number; status: string; message?: string; estimateSource?: string }>
+  accommodation: { area: string; nights: number; rooms: number; cost: number; status: string; level: string; estimateSource?: string }
+  localTransportLegs: Array<{ date: string; fromName: string; toName: string; mode: string; cost: number; distanceKm?: number; durationMinutes?: number; estimateSource?: string }>
 }
 
 export type ChatMessage = {
@@ -61,4 +72,5 @@ export type GeneratedTripPlan = {
   trip: TripSummary
   itinerary: ItineraryItem[]
   expensesByCategory: ExpenseCategory[]
+  logistics?: TravelLogistics
 }

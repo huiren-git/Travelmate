@@ -273,6 +273,38 @@ def _check_budget_consistency(budget: dict) -> list:
     return errors
 
 
+def _validate_travel_logistics(state: TravelAgentState, logistics: Any) -> list[str]:
+    """校验交通与全程住宿的费用、状态和高德字段是否自洽。"""
+    if not isinstance(logistics, dict):
+        return []
+    errors: list[str] = []
+    for leg in logistics.get("intercity_legs") or []:
+        if not isinstance(leg, dict):
+            errors.append("城际交通段格式错误")
+            continue
+        cost = float(leg.get("cost") or 0)
+        if cost < 0:
+            errors.append("城际交通费用不能为负数")
+        if leg.get("status") == "pending" and cost != 0:
+            errors.append("待补充的城际交通不得计入费用")
+    hotel = logistics.get("accommodation")
+    if isinstance(hotel, dict):
+        nights, rooms, rate, cost = (float(hotel.get(key) or 0) for key in ("nights", "rooms", "nightly_rate", "cost"))
+        if nights != max(1, get_duration(state) - 1):
+            errors.append("住宿晚数与行程天数不一致")
+        if abs(nights * rooms * rate - cost) > 0.01:
+            errors.append("住宿费用与晚数、房间数及单晚价格不一致")
+    for leg in logistics.get("local_transport_legs") or []:
+        if not isinstance(leg, dict) or not leg.get("from_name") or not leg.get("to_name"):
+            errors.append("市内交通段缺少起终点")
+            continue
+        if float(leg.get("cost") or 0) < 0:
+            errors.append("市内交通费用不能为负数")
+        if leg.get("estimate_source") == "amap" and (leg.get("distance_km") is None or leg.get("duration_minutes") is None):
+            errors.append("高德市内交通段缺少距离或时长")
+    return errors
+
+
 # 检查每天是否覆盖午餐和晚餐时段。
 def _check_meal_time_coverage(itinerary: list) -> list:
     warnings = []
@@ -551,6 +583,7 @@ async def validator_node(state: TravelAgentState) -> Dict[str, Any]:
 
     if branch == "budget_agent":
         hard_errors, hard_warnings = _validate_budget(budget)
+        hard_errors.extend(_validate_travel_logistics(state, state.get("travel_logistics")))
     else:
         itinerary, itinerary_field = _itinerary_for_validation(state)
         hard_errors, hard_warnings = _validate_itinerary(itinerary, state, itinerary_field)

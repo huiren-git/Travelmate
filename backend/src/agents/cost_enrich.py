@@ -21,6 +21,7 @@ from src.utils.state_utils import (
     get_travelers,
 )
 from src.services.map import amap_distance_km, fetch_food_pois_with_cache
+from src.services.transport_selection import select_local_transport
 
 logger = logging.getLogger("travelmate.agents.cost_enrich")
 
@@ -93,7 +94,7 @@ async def _leg_transport_cost(prev: Dict[str, Any], curr: Dict[str, Any], state:
     if not km or km <= 0:
         return 0.0
     modes = get_local_transport(state) or ["metro"]
-    mode = modes[0] if modes else "metro"
+    mode = select_local_transport(float(km), modes)
     rate = TRANSPORT_RATE_PER_KM.get(mode, 0.4)
     return round(km * rate, 2)
 

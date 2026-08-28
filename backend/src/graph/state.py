@@ -36,7 +36,7 @@ class BudgetDetail(TypedDict):
     """预算明细"""
     level: Literal["economy", "mid", "luxury"]  # 预算等级
     total: float                    # 总预算
-    detail: Dict[str, float]        # {"transport": 550, "hotel": 800, "food": 500, "tickets": 300}
+    detail: Dict[str, float]        # {"intercity_transport": 550, "local_transport": 100, "hotel": 800, "food": 500, "tickets": 300}
     saving_tips: Optional[List[str]]  # 省钱建议
 
 
@@ -95,6 +95,9 @@ class TravelAgentState(TypedDict):
 
     budget: Optional[BudgetDetail]
     """已生效的预算明细"""
+
+    travel_logistics: Optional[Dict[str, Any]]
+    """行程级交通与全程住宿方案，供预算和前端展示共同使用"""
 
     budget_max_allowed: Optional[float]
     """用户预算金额上限（元）：文本由 supervisor 抽取写入，缺失时 budget_agent 按 budget_level 推导兜底；BudgetOverrunHandler 据此判定是否触发超支中断。"""

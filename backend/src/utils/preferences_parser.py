@@ -131,4 +131,10 @@ def parse_structured_preferences(raw: Optional[Dict[str, Any]]) -> Dict[str, Any
         except ValueError:
             pass
 
+    origin = str(raw.get("origin") or "").strip()
+    if origin:
+        result["origin"] = origin
+    if isinstance(raw.get("include_return"), bool):
+        result["include_return"] = raw["include_return"]
+
     return result

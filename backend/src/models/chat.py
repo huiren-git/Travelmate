@@ -22,6 +22,8 @@ class StructuredPreferencesInput(BaseModel):
     hotel_preference: Optional[str] = None
     intercity_transport: Optional[str] = None
     local_transport: Optional[str] = None
+    origin: Optional[str] = None
+    include_return: Optional[bool] = True
 
 
 class ChatStreamRequest(BaseModel):
@@ -54,6 +56,13 @@ class ResumeRequest(BaseModel):
 
     thread_id: str = Field(min_length=1)
     user_decision: UserDecision
+
+
+class LogisticsConfirmationRequest(BaseModel):
+    """确认一个规则估算的住宿或城际交通方案。"""
+
+    thread_id: str = Field(min_length=1)
+    item_key: str = Field(min_length=1)
 
 
 class StopChatData(BaseModel):
