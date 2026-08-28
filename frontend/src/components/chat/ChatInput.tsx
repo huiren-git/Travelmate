@@ -126,6 +126,9 @@ export function ChatInput({
             <Form.Item label={t('chat.startDate')} name="start_date">
               <Input type="date" className="w-full" />
             </Form.Item>
+            <Form.Item label="出发城市" name="origin">
+              <Input placeholder="例如：上海（不填则不计入城际交通）" />
+            </Form.Item>
 
             <Form.Item label={t('chat.budgetLevel')} name="budget_level">
               <Radio.Group optionType="button" buttonStyle="solid">
@@ -173,6 +176,9 @@ export function ChatInput({
                 placeholder={t('chat.intercityPlaceholder')}
                 options={intercityTransportOptions.map((value) => ({ label: t(`chat.opt.intercity.${value}`), value }))}
               />
+            </Form.Item>
+            <Form.Item label="包含返程" name="include_return" valuePropName="checked" initialValue>
+              <Checkbox>将返程城际交通计入预算</Checkbox>
             </Form.Item>
 
             <Form.Item label={t('chat.localTransport')} name="local_transport">

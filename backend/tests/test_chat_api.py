@@ -7,7 +7,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 from src.api.v1 import chat as chat_api
-from src.api.v1.chat import ChatStreamRequest, ResumeRequest, UserDecision
+from src.api.v1.chat import ChatStreamRequest, ResumeRequest, UserDecision, LogisticsConfirmationRequest
 from src.core.exceptions import AppException
 
 
@@ -35,6 +35,11 @@ class FakeGraph:
         self.stream_inputs: list[Any] = []
         self.started = asyncio.Event()
         self.block = False
+
+    async def aupdate_state(self, config: dict[str, Any], values: dict[str, Any]):
+        thread_id = config["configurable"]["thread_id"]
+        current = self.snapshots[thread_id].values
+        self.snapshots[thread_id] = FakeSnapshot(values={**current, **values})
 
     # 返回指定 thread 的 fake checkpoint。
     async def aget_state(self, config: dict[str, Any]) -> FakeSnapshot:
@@ -73,6 +78,26 @@ def clear_active_runs():
     chat_api._active_runs.clear()
     yield
     chat_api._active_runs.clear()
+
+
+@pytest.mark.asyncio
+async def test_confirm_logistics_persists_confirmed_accommodation(monkeypatch):
+    graph = FakeGraph()
+    graph.snapshots["thread-logistics"] = FakeSnapshot(values={
+        "travel_logistics": {"accommodation": {"status": "estimated"}, "intercity_legs": []},
+    })
+
+    async def fake_get_graph():
+        return graph
+
+    monkeypatch.setattr(chat_api, "_get_graph", fake_get_graph)
+    response = await chat_api.confirm_logistics(
+        LogisticsConfirmationRequest(thread_id="thread-logistics", item_key="accommodation"),
+        user_id="user-1",
+    )
+
+    assert response.data["accommodation"]["status"] == "confirmed"
+    assert graph.snapshots["thread-logistics"].values["travel_logistics"]["accommodation"]["status"] == "confirmed"
 
 
 # 验证 stream 接口能够把 graph 更新编码成 SSE 事件。

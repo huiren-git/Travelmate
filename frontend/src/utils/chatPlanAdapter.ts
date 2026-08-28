@@ -1,4 +1,4 @@
-import type { ExpenseCategory, GeneratedTripPlan, ItineraryCategory, ItineraryItem, TripSummary } from '../types/chat'
+import type { ExpenseCategory, GeneratedTripPlan, ItineraryCategory, ItineraryItem, TravelLogistics, TripSummary } from '../types/chat'
 
 const expenseColors = ['#0071EB', '#FF6F61', '#10B981', '#F59E0B', '#8B5CF6', '#06B6D4']
 const categoryLabels: ItineraryCategory[] = ['景酒', '餐饮', '交通', '娱乐', '其他']
@@ -260,6 +260,18 @@ function buildTripSummary(
   }
 }
 
+function normalizeLogistics(source: unknown): TravelLogistics | undefined {
+  if (!isRecord(source) || !isRecord(source.accommodation)) return undefined
+  const legs = Array.isArray(source.intercity_legs) ? source.intercity_legs : []
+  const local = Array.isArray(source.local_transport_legs) ? source.local_transport_legs : []
+  return {
+    origin: firstString(source.origin), destination: firstString(source.destination) ?? '目的地', includeReturn: Boolean(source.include_return),
+    intercityLegs: legs.filter(isRecord).map((leg) => ({ kind: firstString(leg.kind) ?? 'outbound', origin: firstString(leg.origin), destination: firstString(leg.destination) ?? '目的地', mode: firstString(leg.mode) ?? '待定', cost: firstNumber(leg.cost) ?? 0, status: firstString(leg.status) ?? 'pending', message: firstString(leg.message), estimateSource: firstString(leg.estimate_source) })),
+    accommodation: { area: firstString(source.accommodation.area) ?? '待定', nights: firstNumber(source.accommodation.nights) ?? 0, rooms: firstNumber(source.accommodation.rooms) ?? 1, cost: firstNumber(source.accommodation.cost) ?? 0, status: firstString(source.accommodation.status) ?? 'estimated', level: firstString(source.accommodation.level) ?? 'mid', estimateSource: firstString(source.accommodation.estimate_source) },
+    localTransportLegs: local.filter(isRecord).map((leg) => ({ date: firstString(leg.date) ?? '', fromName: firstString(leg.from_name) ?? '上一站', toName: firstString(leg.to_name) ?? '下一站', mode: firstString(leg.mode) ?? '地铁', cost: firstNumber(leg.cost) ?? 0, distanceKm: firstNumber(leg.distance_km), durationMinutes: firstNumber(leg.duration_minutes), estimateSource: firstString(leg.estimate_source) })),
+  }
+}
+
 export function adaptGeneratedTripPlan(data: unknown): GeneratedTripPlan | undefined {
   const state = getState(data)
   if (!state) {
@@ -297,5 +309,6 @@ export function adaptGeneratedTripPlan(data: unknown): GeneratedTripPlan | undef
     trip,
     itinerary,
     expensesByCategory,
+    logistics: normalizeLogistics(state.travel_logistics),
   }
 }

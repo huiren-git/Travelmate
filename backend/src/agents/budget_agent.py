@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.core.tracing import trace_span
 from src.graph.state import TravelAgentState
+from src.services.travel_logistics import build_travel_logistics, enrich_local_transport_legs
 from src.utils.llm_utils import call_llm, ensure_dict, ensure_list, extract_json, message_content
 from src.utils.state_utils import (
     get_budget_level,
@@ -87,7 +88,7 @@ def _travelers(state: TravelAgentState) -> int:
 # 方法4：由 Σ(item.cost + item.leg_transport_cost) 翻转出预算明细。
 # 住宿是行程级变量（整趟基本同一家酒店），按晚数 × 等级估算，不进入每日 item。
 def _flip_budget_from_items(itinerary: Any, state: TravelAgentState) -> Dict[str, float]:
-    food = transport = tickets = 0.0
+    food = tickets = 0.0
     for day in ensure_list(itinerary, "daily_itinerary"):
         if not isinstance(day, dict):
             continue
@@ -99,20 +100,19 @@ def _flip_budget_from_items(itinerary: Any, state: TravelAgentState) -> Dict[str
                 food += float(item.get("cost") or 0.0)
             elif category == "tickets":
                 tickets += float(item.get("cost") or 0.0)
-            transport += float(item.get("leg_transport_cost") or 0.0)
+            # 市内交通从行程级物流结构读取，避免高德重算后的费用被旧字段覆盖。
 
-    level = get_budget_level(state)
-    nights = max(1, (int(get_duration(state) or 1) - 1))
-    travelers = _travelers(state)
-    # 酒店：晚数 × 单晚单价（按等级），多人时按比例上浮（>2 人按人数/2 计房费）
-    hotel_rate = {"economy": 200.0, "mid": 450.0, "luxury": 1000.0}.get(level, 450.0)
-    room_factor = 1.0 if travelers <= 2 else travelers / 2.0
-    hotel = round(hotel_rate * nights * room_factor, 2)
+    calculated_logistics = build_travel_logistics(state, ensure_list(itinerary, "daily_itinerary"))
+    logistics = {**calculated_logistics, **(state.get("travel_logistics") or {})}
+    intercity_transport = sum(float(leg.get("cost") or 0.0) for leg in logistics.get("intercity_legs", []))
+    local_transport = sum(float(leg.get("cost") or 0.0) for leg in logistics.get("local_transport_legs", []))
+    hotel = float((logistics.get("accommodation") or {}).get("cost") or 0.0)
 
     return {
         "food": round(food, 2),
         "tickets": round(tickets, 2),
-        "transport": round(transport, 2),
+        "intercity_transport": round(intercity_transport, 2),
+        "local_transport": round(local_transport, 2),
         "hotel": hotel,
     }
 
@@ -133,7 +133,10 @@ async def budget_agent_node(state: TravelAgentState) -> Dict[str, Any]:
     raw = ensure_dict(parsed.get("budget"), "budget")
 
     # 方法4：明细与总额均由行程项翻转，不再依赖 LLM 拍脑袋
-    detail = _flip_budget_from_items(get_draft_daily_itinerary(state) or get_daily_itinerary(state), state)
+    itinerary = get_draft_daily_itinerary(state) or get_daily_itinerary(state)
+    logistics = build_travel_logistics(state, itinerary)
+    await enrich_local_transport_legs(logistics["local_transport_legs"])
+    detail = _flip_budget_from_items(itinerary, {**state, "travel_logistics": logistics})
     total = round(sum(detail.values()), 2)
 
     level = _as_text(raw.get("level"), get_budget_level(state))
@@ -162,6 +165,7 @@ async def budget_agent_node(state: TravelAgentState) -> Dict[str, Any]:
             "detail": detail,
             "saving_tips": [tip for tip in tips if tip],
         },
+        "travel_logistics": logistics,
         "budget_max_allowed": max_allowed,
         # 重翻 total 完成，清除脏标记，避免 validator 下一轮重复触发 budget_agent 死循环。
         "budget_dirty": False,

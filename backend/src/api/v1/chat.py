@@ -18,12 +18,14 @@ from src.core.exceptions import AppException
 from src.graph.graph import get_graph_async
 from src.models.chat import (
     ChatStreamRequest,
+    LogisticsConfirmationRequest,
     ResumeRequest,
     StopChatData,
     UserDecision,
 )
 from src.models.common import ApiResponse
 from src.utils.preferences_parser import parse_structured_preferences
+from src.services.travel_logistics import confirm_logistics_item
 
 from src.core.tracing import set_trace_id, generate_trace_id, get_trace_id
 from src.services.tracing_db import start_trace, end_trace
@@ -150,6 +152,8 @@ def _structured_state_values(structured_input) -> Dict[str, Any]:
     # 把 start_date 提到顶层，供 _initial_state 的 start_date 字段直接读取
     if "start_date" in parsed:
         values["start_date"] = parsed["start_date"]
+    if "origin" in parsed:
+        values["origin"] = parsed["origin"]
     return values
 
 
@@ -169,6 +173,7 @@ def _initial_state(request: ChatStreamRequest, user_id: str) -> Dict[str, Any]:
         "fetched_attractions": None,
         "daily_itinerary": None,
         "budget": None,
+        "travel_logistics": None,
         "budget_max_allowed": None,
         "budget_auto_retry": 0,
         "budget_dirty": False,
@@ -339,8 +344,8 @@ async def _run_graph(
         final_state = await graph.aget_state(config)
         snapshot = {
             "values": final_state.values,
-            "next": final_state.next,
-            "tasks": _serialize_interrupts(final_state.tasks),
+            "next": getattr(final_state, "next", ()),
+            "tasks": _serialize_interrupts(getattr(final_state, "tasks", ())),
         }
 
         # 5. 根据是否被停止来决定最终状态
@@ -389,6 +394,27 @@ async def _event_stream(run: ActiveRun):
             _active_runs.pop(run.thread_id, None)
 
 # 启动一次新的 graph 流程并返回 SSE 流。
+@router.post("/logistics/confirm", response_model=ApiResponse[Dict[str, Any]])
+async def confirm_logistics(
+    request: LogisticsConfirmationRequest,
+    user_id: str = Header(default="demo-user", alias="X-User-Id"),
+):
+    """确认城际交通或全程住宿方案，并写回当前会话状态。"""
+    graph = await _get_graph()
+    config = {"configurable": {"thread_id": request.thread_id}}
+    snapshot = await graph.aget_state(config)
+    values = getattr(snapshot, "values", {}) or {}
+    logistics = values.get("travel_logistics")
+    if not isinstance(logistics, dict):
+        raise AppException(code=40002, message="参数校验失败", details={"item_key": "当前会话没有可确认的出行方案"})
+    try:
+        confirmed = confirm_logistics_item(logistics, request.item_key)
+    except ValueError:
+        raise AppException(code=40002, message="参数校验失败", details={"item_key": "未知的出行方案"})
+    await graph.aupdate_state(config, {"travel_logistics": confirmed})
+    return ApiResponse(code=200, message="ok", data=confirmed)
+
+
 @router.post("/stream")
 async def chat_stream(
     request: ChatStreamRequest,

@@ -23,6 +23,16 @@ export type ResumeChatRequest = {
   user_decision: UserDecision
 }
 
+export async function confirmLogistics(threadId: string, itemKey: string) {
+  const response = await fetch(`${API_BASE_URL}/chat/logistics/confirm`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-User-Id': USER_ID },
+    body: JSON.stringify({ thread_id: threadId, item_key: itemKey }),
+  })
+  if (!response.ok) throw new Error((await response.text()) || response.statusText)
+  const payload = await response.json() as { data?: unknown }
+  return payload.data
+}
+
 // 后端 BudgetOverrunHandler.build_payload 产出的中断 payload（挂在前端 done 事件的 tasks[].interrupts[].value）。
 export type BudgetInterruptPayload = {
   type: string

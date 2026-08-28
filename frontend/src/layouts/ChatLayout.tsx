@@ -7,6 +7,7 @@ import { NewTripEmptyState } from '../components/chat/NewTripEmptyState'
 import { TripSummaryCard } from '../components/chat/TripSummaryCard'
 import { TripTipsCard } from '../components/chat/TripTipsCard'
 import { TripPlanSider } from '../components/itinerary/TripPlanSider'
+import { TravelLogisticsCard } from '../components/itinerary/TravelLogisticsCard'
 import type { ChatPageState } from '../hooks/useChatPageState'
 
 const { Content } = Layout
@@ -27,6 +28,8 @@ export function ChatLayout({
   isTripPlanEmpty,
   isStreaming,
   itinerary,
+  logistics,
+  confirmLogisticsItem,
   messages,
   pendingInterrupt,
   pieConicGradient,
@@ -67,6 +70,7 @@ export function ChatLayout({
                 {activeConversation && trip && !isTripPlanEmpty && (
                   <TripSummaryCard conversationStatus={activeConversation.status} remaining={remaining} trip={trip} />
                 )}
+                <TravelLogisticsCard logistics={logistics} onConfirm={confirmLogisticsItem} />
                 <ChatMessages messages={messages} primaryColor={colors.primary} />
                 {pendingInterrupt && (
                   <BudgetOverrunBubble

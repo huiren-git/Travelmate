@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createChatThreadId, resumeChat, streamChat, type BudgetInterruptPayload, type ParsedSseEvent } from '../api/chat'
+import { confirmLogistics, createChatThreadId, resumeChat, streamChat, type BudgetInterruptPayload, type ParsedSseEvent } from '../api/chat'
 import { fetchSessionSnapshot, fetchSessions, mapSessionItemsToConversations, type SessionSnapshotBlackboard } from '../api/sessions'
 import type { ChatMessage, Conversation, GeneratedTripPlan, StructuredPreferences } from '../types/chat'
 import { adaptGeneratedTripPlan } from '../utils/chatPlanAdapter'
@@ -413,6 +413,16 @@ export function useChatPageState() {
     }
   }
 
+  async function confirmLogisticsItem(itemKey: string) {
+    const logistics = await confirmLogistics(activeConversationId, itemKey)
+    setGeneratedTripPlansByConversationId((current) => {
+      const plan = current[activeConversationId]
+      if (!plan || !isRecord(logistics)) return current
+      const next = adaptGeneratedTripPlan({ values: { terminal_status: 'confirmed', is_finished: true, budget: { total: plan.trip.budgetCny, detail: {} }, daily_itinerary: plan.itinerary, travel_logistics: logistics } })
+      return next ? { ...current, [activeConversationId]: { ...plan, logistics: next.logistics } } : current
+    })
+  }
+
   // 用户处理超支中断：调用 /chat/resume 续跑图，并把返回的 SSE 当作普通流式消息追加到对话栏。
   async function resolveInterrupt(action: 'accept' | 'modify', hint?: string) {
     const threadId = activeConversationId
@@ -506,6 +516,8 @@ export function useChatPageState() {
     structuredPreferences,
     trip: displayTrip,
     itinerary: displayItinerary,
+    logistics: generatedTripPlan?.logistics,
+    confirmLogisticsItem,
   }
 }
 
