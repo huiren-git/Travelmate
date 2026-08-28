@@ -51,6 +51,7 @@ _LOCAL_MAP = {
     "步行": ["walking"],
     "公共交通": ["metro", "bus"],
     "打车": ["taxi"],
+    "网约车/专车": ["ride_hailing"],
     "租车": ["self_driving"],
     "无偏好": [],
 }

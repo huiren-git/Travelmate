@@ -85,36 +85,52 @@ def test_local_transport_legs_use_item_locations_and_preferred_mode():
             "estimate_source": "rule",
             "from_location": "116.397,39.918",
             "to_location": "116.396,39.925",
+            "city": "北京",
         }
     ]
 
 
 @pytest.mark.asyncio
-async def test_enrich_local_transport_uses_amap_distance_when_available(monkeypatch):
+@pytest.mark.parametrize(
+    ("mode", "quote", "expected_cost"),
+    [
+        ("metro", {"distance_km": 1.5, "duration_minutes": 12, "cost": 4.0}, 4.0),
+        ("taxi", {"distance_km": 2.1, "duration_minutes": 8, "cost": 16.5}, 16.5),
+        ("ride_hailing", {"distance_km": 2.3, "duration_minutes": 9, "cost": 18.8}, 18.8),
+    ],
+)
+async def test_enrich_local_transport_uses_amap_returned_fare_for_supported_modes(monkeypatch, mode, quote, expected_cost):
+    """Breaks if a high-de map quote is replaced by distance-rate arithmetic."""
     from src.services import travel_logistics
 
-    async def distance(*_args):
-        return 1.5
+    async def route_quote(*_args):
+        return quote
 
-    monkeypatch.setattr(travel_logistics, "amap_distance_km", distance)
-    legs = [{"from_location": "116.39,39.91", "to_location": "116.40,39.92", "mode": "metro", "cost": 2.0}]
+    monkeypatch.setattr(travel_logistics, "amap_route_quote", route_quote)
+    legs = [{
+        "from_location": "116.39,39.91",
+        "to_location": "116.40,39.92",
+        "mode": mode,
+        "allowed_modes": [mode],
+        "cost": 2.0,
+    }]
 
     result = await travel_logistics.enrich_local_transport_legs(legs)
 
     assert result[0]["estimate_source"] == "amap"
-    assert result[0]["distance_km"] == 1.5
-    assert result[0]["duration_minutes"] > 0
-    assert result[0]["cost"] == 0.6
+    assert result[0]["distance_km"] == quote["distance_km"]
+    assert result[0]["duration_minutes"] == quote["duration_minutes"]
+    assert result[0]["cost"] == expected_cost
 
 
 @pytest.mark.asyncio
 async def test_enrich_local_transport_keeps_rule_estimate_when_amap_has_no_route(monkeypatch):
     from src.services import travel_logistics
 
-    async def no_distance(*_args):
+    async def no_route_quote(*_args):
         return None
 
-    monkeypatch.setattr(travel_logistics, "amap_distance_km", no_distance)
+    monkeypatch.setattr(travel_logistics, "amap_route_quote", no_route_quote)
     legs = [{"from_location": "116.39,39.91", "to_location": "116.40,39.92", "mode": "metro", "cost": 2.0}]
 
     result = await travel_logistics.enrich_local_transport_legs(legs)

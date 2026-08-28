@@ -24,8 +24,11 @@ export default function ReferenceTripsPage() {
     const threadId = createChatThreadId()
     adoptReference(selected.id, { thread_id: threadId, start_date: date.format('YYYY-MM-DD'), duration: days, travelers, destination: selected.destination }, event => {
       if (event.event === 'done') { sessionStorage.setItem('reference-adoption', JSON.stringify({ threadId, data: event.data })); navigate('/chat') }
-      if (event.event === 'error') message.error('采纳失败')
-    }).finally(() => setLoading(false))
+      if (event.event === 'error') {
+        const error = event.data as { error?: unknown }
+        message.error(typeof error.error === 'string' ? error.error : '采纳失败')
+      }
+    }).catch(error => message.error(error instanceof Error ? error.message : '采纳失败')).finally(() => setLoading(false))
   }
 
   return <div className="mx-auto max-w-5xl p-6"><h1 className="mb-6 text-3xl font-bold">参考行程</h1><div className="grid gap-4 md:grid-cols-2">

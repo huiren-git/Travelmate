@@ -37,7 +37,7 @@ logger = logging.getLogger("travelmate.agents.validator")
 MAX_VALIDATION_ATTEMPTS = 3
 MAX_HARD_VALIDATION_ATTEMPTS = 3
 MAX_SOFT_VALIDATION_ATTEMPTS = 2
-SOFT_SCORE_THRESHOLD = 80
+SOFT_SCORE_THRESHOLD = 70
 
 
 # 获取用于 Validator 的 LLM 实例，温度固定为 0.0

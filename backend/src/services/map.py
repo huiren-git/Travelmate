@@ -254,6 +254,91 @@ async def amap_distance_km(origin: str, destination: str) -> Optional[float]:
         return None
 
 
+def _as_positive_float(value: Any) -> Optional[float]:
+    """将高德返回的数值字段安全转换为非负浮点数。"""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _first_present_value(*values: Any) -> Optional[float]:
+    """按优先级读取高德响应中的第一个有效数值字段。"""
+    for value in values:
+        parsed = _as_positive_float(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+async def amap_route_quote(
+    origin: str,
+    destination: str,
+    mode: str,
+    city: Optional[str] = None,
+) -> Optional[Dict[str, float]]:
+    """调用对应高德路线服务，返回距离、时长和该方式的费用（元）。"""
+    if not (origin and destination and settings.amap_api_key):
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            if mode in {"metro", "bus"}:
+                # 公交/地铁费用来自首个换乘方案的 transit_fee 字段。
+                response = await client.get(
+                    "https://restapi.amap.com/v3/direction/transit/integrated",
+                    params={
+                        "origin": origin,
+                        "destination": destination,
+                        "city": city or "",
+                        "extensions": "all",
+                        "key": settings.amap_api_key,
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+                route = payload.get("route") or {}
+                transit = (route.get("transits") or [{}])[0] or {}
+                distance_m = _first_present_value(transit.get("distance"), route.get("distance"))
+                duration_s = _first_present_value(transit.get("duration"))
+                fee = _first_present_value(transit.get("transit_fee"), transit.get("cost"))
+            else:
+                # 打车与网约车均使用驾车路线；网约车按道路距离乘可配置均价估算。
+                response = await client.get(
+                    "https://restapi.amap.com/v3/direction/driving",
+                    params={
+                        "origin": origin,
+                        "destination": destination,
+                        "strategy": 0,
+                        "extensions": "all",
+                        "key": settings.amap_api_key,
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+                route = payload.get("route") or {}
+                path = (route.get("paths") or [{}])[0] or {}
+                distance_m = _first_present_value(path.get("distance"))
+                duration_s = _first_present_value(path.get("duration"))
+                fee = (
+                    round(distance_m / 1000.0 * settings.ride_hailing_average_rate_per_km, 2)
+                    if mode == "ride_hailing" and distance_m is not None
+                    else _first_present_value(route.get("taxiCost"), route.get("taxi_cost"))
+                )
+
+        if payload.get("status") not in (None, "1", 1) or fee is None or distance_m is None or duration_s is None:
+            return None
+        return {
+            "distance_km": round(distance_m / 1000.0, 2),
+            "duration_minutes": max(1, round(duration_s / 60.0)),
+            "cost": round(fee, 2),
+        }
+    except Exception:
+        logger.error("高德路线费用查询失败: mode=%s origin=%s dest=%s", mode, origin, destination)
+        return None
+
+
 # 获取城市美食 POI，结构同 fetch_attractions_with_cache，keywords="美食"，补全餐饮单价覆盖。
 async def fetch_food_pois_with_cache(
     city: str,

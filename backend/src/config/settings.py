@@ -31,6 +31,8 @@ class Settings(BaseSettings):
 
     # 高德地图
     amap_api_key: str = ""
+    # 网约车估价服务不可用时，按高德驾车道路距离计算的每公里均价（元）。
+    ride_hailing_average_rate_per_km: float = 3.0
     
     # 和风天气
     qweather_api_key: str = ""

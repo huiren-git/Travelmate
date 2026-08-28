@@ -181,7 +181,7 @@ export const en: Dict = {
       travelersType: { '独自出行': 'Solo', '情侣': 'Couple', '亲子': 'With kids', '朋友': 'Friends', '家庭': 'Family', '长辈同行': 'With elders' },
       hotel: { '经济型酒店': 'Budget hotel', '舒适型酒店': 'Comfort hotel', '高端酒店': 'Premium hotel', '特色民宿': 'Boutique' },
       intercity: { '火车': 'Train', '飞机': 'Flight', '自驾': 'Drive', '无偏好': 'No preference' },
-      local: { '步行': 'Walk', '公共交通': 'Transit', '打车': 'Taxi', '租车': 'Rental', '无偏好': 'No preference' },
+      local: { '步行': 'Walk', '公共交通': 'Transit', '打车': 'Taxi', '网约车/专车': 'Ride-hailing', '租车': 'Rental', '无偏好': 'No preference' },
       interest: { '美食': 'Food', '摄影': 'Photo', '自然风光': 'Nature', '人文古迹': 'Culture', '亲子活动': 'Kids', '购物': 'Shopping' },
     },
   },

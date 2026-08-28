@@ -1,14 +1,17 @@
+import asyncio
 import json
 from typing import Any
 from fastapi import APIRouter, Header, Query
 from fastapi.responses import StreamingResponse
 
 from src.core.exceptions import AppException
+from src.core.tracing import generate_trace_id, set_trace_id
 from src.graph.reference_validator import reference_validator_node
 from src.models.common import ApiResponse
 from src.models.reference import AdoptReferenceRequest
 from src.services.reference_adapter import adapt_reference_trip
 from src.services.reference_trip_service import get_reference_trip, increment_reference_usage, list_reference_trips
+from src.services.tracing_db import end_trace, start_trace
 
 router = APIRouter(prefix="/reference")
 
@@ -28,6 +31,16 @@ async def adopt_reference(reference_id: int, request: AdoptReferenceRequest, use
         raise AppException(code=40401, message="参考行程不存在", status_code=404)
     if request.destination and request.destination != reference["destination"]:
         raise AppException(code=40002, message="目的地必须与参考行程一致", status_code=422)
+
+    trace_id = generate_trace_id()
+    set_trace_id(trace_id)
+    await start_trace(
+        trace_id=trace_id,
+        thread_id=request.thread_id,
+        user_id=user_id,
+        input_message=f"采纳参考行程：{reference['destination']}",
+    )
+
     async def stream():
         try:
             draft, log = await adapt_reference_trip(reference, duration=request.duration, start_date=request.start_date, travelers=request.travelers)
@@ -38,7 +51,12 @@ async def adopt_reference(reference_id: int, request: AdoptReferenceRequest, use
             yield _sse("node", {"thread_id": request.thread_id, "node": "reference_validator", "data": result})
             if result["terminal_status"] == "confirmed":
                 await increment_reference_usage(reference_id)
+            await end_trace(trace_id, status="success")
             yield _sse("done", {"values": final, "next": [], "tasks": []})
+        except asyncio.CancelledError:
+            await end_trace(trace_id, status="cancelled")
+            raise
         except Exception as exc:
+            await end_trace(trace_id, status="error", error_msg=str(exc))
             yield _sse("error", {"error": str(exc)})
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

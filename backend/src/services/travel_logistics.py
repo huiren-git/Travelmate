@@ -16,7 +16,7 @@ from src.utils.state_utils import (
     get_start_date,
     get_travelers,
 )
-from src.services.map import amap_distance_km
+from src.services.map import amap_route_quote
 from src.services.transport_selection import select_local_transport
 
 
@@ -34,7 +34,7 @@ _CITY_COORDINATES = {
     "西安": (34.3416, 108.9398),
 }
 _HOTEL_RATES = {"economy": 200.0, "mid": 450.0, "luxury": 1000.0}
-_LOCAL_TRANSPORT_RATE_PER_KM = {"metro": 0.4, "bus": 0.25, "taxi": 2.6, "self_driving": 1.2, "bike": 0.0, "walking": 0.0}
+_LOCAL_TRANSPORT_RATE_PER_KM = {"metro": 0.4, "bus": 0.25, "taxi": 2.6, "ride_hailing": 2.6, "self_driving": 1.2, "bike": 0.0, "walking": 0.0}
 
 
 def _intercity_mode(state: dict[str, Any]) -> str:
@@ -106,6 +106,7 @@ def _accommodation(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _local_transport_legs(state: dict[str, Any], itinerary: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """将每日相邻景点转换为待高德路线服务补全的市内交通段。"""
     modes = get_local_transport(state)
     legs: list[dict[str, Any]] = []
     for day in itinerary:
@@ -128,29 +129,30 @@ def _local_transport_legs(state: dict[str, Any], itinerary: list[dict[str, Any]]
                 "estimate_source": "rule",
                 "from_location": previous.get("location"),
                 "to_location": current.get("location"),
+                "city": get_destination(state),
             })
     return legs
 
 
 async def enrich_local_transport_legs(legs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """用高德补齐已具有坐标的市内交通段，失败则保留规则估算。"""
-    speed_kph = {"metro": 28.0, "bus": 18.0, "taxi": 30.0, "self_driving": 30.0, "bike": 12.0, "walking": 4.5}
+    """用高德路线费用补齐市内交通段；调用失败时保留原规则估算。"""
     for leg in legs:
         origin, destination = leg.get("from_location"), leg.get("to_location")
         if not origin or not destination:
             leg.setdefault("estimate_source", "rule")
             continue
         try:
-            distance = await amap_distance_km(origin, destination)
+            mode = select_local_transport(0, leg.get("allowed_modes") or [leg.get("mode")])
+            quote = await amap_route_quote(origin, destination, mode, leg.get("city"))
         except Exception:
-            distance = None
-        if not distance or distance <= 0:
+            quote = None
+        if not quote:
             leg.setdefault("estimate_source", "rule")
             continue
-        leg["mode"] = select_local_transport(float(distance), leg.get("allowed_modes") or [])
-        leg["distance_km"] = round(float(distance), 2)
-        leg["duration_minutes"] = max(1, round(float(distance) / speed_kph.get(leg.get("mode"), 25.0) * 60))
-        leg["cost"] = round(float(distance) * _LOCAL_TRANSPORT_RATE_PER_KM.get(leg.get("mode"), 0.4), 2)
+        leg["mode"] = mode
+        leg["distance_km"] = quote["distance_km"]
+        leg["duration_minutes"] = quote["duration_minutes"]
+        leg["cost"] = quote["cost"]
         leg["estimate_source"] = "amap"
     return legs
 

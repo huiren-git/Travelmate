@@ -33,7 +33,7 @@ const hotelOptions: NonNullable<StructuredPreferences['hotel_preference']>[] = [
   '特色民宿',
 ]
 const intercityTransportOptions: NonNullable<StructuredPreferences['intercity_transport']>[] = ['火车', '飞机', '自驾', '无偏好']
-const localTransportOptions: NonNullable<StructuredPreferences['local_transport']>[] = ['步行', '公共交通', '打车', '租车', '无偏好']
+const localTransportOptions: NonNullable<StructuredPreferences['local_transport']>[] = ['步行', '公共交通', '打车', '网约车/专车', '租车', '无偏好']
 
 function normalizePreferences(values: StructuredPreferences): StructuredPreferences | undefined {
   const normalized = Object.fromEntries(

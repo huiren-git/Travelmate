@@ -22,7 +22,7 @@ export type StructuredPreferences = {
   travelers_type?: '独自出行' | '情侣' | '亲子' | '朋友' | '家庭' | '长辈同行'
   hotel_preference?: '经济型酒店' | '舒适型酒店' | '高端酒店' | '特色民宿'
   intercity_transport?: '火车' | '飞机' | '自驾' | '无偏好'
-  local_transport?: '步行' | '公共交通' | '打车' | '租车' | '无偏好'
+  local_transport?: '步行' | '公共交通' | '打车' | '网约车/专车' | '租车' | '无偏好'
 }
 
 export type TravelLogistics = {
