@@ -10,6 +10,7 @@ from src.utils.state_utils import (
     get_destination,
     get_duration,
     get_hotel_preference,
+    get_lodging_mode,
     get_intercity_transport,
     get_local_transport,
     get_origin,
@@ -85,6 +86,16 @@ def _intercity_legs(state: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _accommodation(state: dict[str, Any]) -> dict[str, Any]:
+    if get_lodging_mode(state) == "home":
+        return {
+            "mode": "home",
+            "area": "住家里",
+            "nights": 0,
+            "rooms": 0,
+            "nightly_rate": 0.0,
+            "cost": 0.0,
+            "status": "not_required",
+        }
     duration = get_duration(state)
     nights = max(1, duration - 1)
     travelers = max(1, get_travelers(state))
@@ -93,6 +104,7 @@ def _accommodation(state: dict[str, Any]) -> dict[str, Any]:
     check_in = get_start_date(state)
     rate = _HOTEL_RATES.get(level, _HOTEL_RATES["mid"])
     return {
+        "mode": "hotel",
         "area": f"{get_destination(state)}核心交通便利区域",
         "level": level,
         "check_in": check_in.isoformat(),

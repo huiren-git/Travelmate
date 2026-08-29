@@ -7,6 +7,7 @@ import { groupItineraryByDate } from '../utils/itinerary'
 import { buildPieConicGradient } from '../utils/pie'
 import { useAppSettingsStore } from '../store/useAppSettingsStore'
 import { getTravelmateTheme } from '../utils/theme.tsx'
+import { loadingLabelForStreamEvent } from '../utils/chatIntent'
 
 function formatMessageTime() {
   return new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
@@ -29,7 +30,12 @@ function extractAiMessageContent(value: unknown): string | undefined {
     return undefined
   }
 
-  const candidateMessages = [value.messages, isRecord(value.data) ? value.data.messages : undefined, isRecord(value.state) ? value.state.messages : undefined]
+  const candidateMessages = [
+    value.messages,
+    isRecord(value.data) ? value.data.messages : undefined,
+    isRecord(value.state) ? value.state.messages : undefined,
+    isRecord(value.values) ? value.values.messages : undefined,
+  ]
 
   for (const messages of candidateMessages) {
     if (!Array.isArray(messages)) {
@@ -109,6 +115,9 @@ function streamEventContent(event: ParsedSseEvent): string | undefined {
     return aiContent
   }
 
+  const intentLabel = loadingLabelForStreamEvent(event.event, event.data)
+  if (intentLabel) return intentLabel
+
   if (event.event === 'done') {
     return extractDoneItineraryContent(event.data)
   }
@@ -121,7 +130,7 @@ function streamEventContent(event: ParsedSseEvent): string | undefined {
   }
   if (event.event === 'node') {
     const data = event.data && typeof event.data === 'object' ? (event.data as { node?: unknown }) : {}
-    return typeof data.node === 'string' ? `正在生成：${data.node}` : '正在生成行程...'
+    return typeof data.node === 'string' ? `正在处理：${data.node}` : '正在生成行程...'
   }
   return '正在生成行程...'
 }

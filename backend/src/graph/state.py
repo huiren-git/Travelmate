@@ -121,6 +121,9 @@ class TravelAgentState(TypedDict):
     """基于行程草稿计算的预算草稿，通过 Validator 后才能覆写 budget。"""
 
     # ========== 6. 流程控制（元认知层） ==========
+    intent: Literal["plan", "consult", "update_preferences", "replan"]
+    """本轮用户意图，驱动只读咨询、偏好更新和局部行程调整的边界。"""
+
     plan_mode: Literal["plan", "replan"]
     """规划模式：plan=首次规划，replan=基于已生效数据修改"""
 

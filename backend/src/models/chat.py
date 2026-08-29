@@ -20,6 +20,8 @@ class StructuredPreferencesInput(BaseModel):
     travelers: Optional[int] = None
     travelers_type: Optional[str] = None
     hotel_preference: Optional[str] = None
+    lodging_mode: Optional[str] = None
+    lodging_mode: Optional[str] = None
     intercity_transport: Optional[str] = None
     local_transport: Optional[str] = None
     origin: Optional[str] = None

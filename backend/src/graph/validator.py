@@ -290,7 +290,7 @@ def _validate_travel_logistics(state: TravelAgentState, logistics: Any) -> list[
         if leg.get("status") == "pending" and cost != 0:
             errors.append("待补充的城际交通不得计入费用")
     hotel = logistics.get("accommodation")
-    if isinstance(hotel, dict):
+    if isinstance(hotel, dict) and hotel.get("mode") != "home":
         nights, rooms, rate, cost = (float(hotel.get(key) or 0) for key in ("nights", "rooms", "nightly_rate", "cost"))
         if nights != max(1, get_duration(state) - 1):
             errors.append("住宿晚数与行程天数不一致")
@@ -683,7 +683,9 @@ async def validator_node(state: TravelAgentState) -> Dict[str, Any]:
     elif should_run_budget_after_itinerary:
         update["next_node"] = "budget_agent"
     if branch == "budget_agent" and passed and not auto_retry:
-        update["daily_itinerary"] = get_draft_daily_itinerary(state)
+        # 偏好更新只重算交通/预算时没有行程草稿，必须保留已生效的每日安排。
+        if state.get("draft_daily_itinerary") is not None:
+            update["daily_itinerary"] = get_draft_daily_itinerary(state)
         update["budget"] = budget
         update["draft_daily_itinerary"] = None
         update["draft_budget"] = None

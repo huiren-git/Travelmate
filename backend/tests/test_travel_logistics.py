@@ -55,6 +55,54 @@ def test_origin_and_return_create_estimated_round_trip_and_single_accommodation(
     }
 
 
+def test_home_lodging_omits_hotel_booking_and_cost():
+    """Breaks if residents are assigned a hotel despite lodging_mode=home."""
+    logistics = build_travel_logistics(
+        {
+            "origin": "北京",
+            "destination": "北京",
+            "start_date": "2026-09-01",
+            "duration": 3,
+            "structured_preferences": {"lodging_mode": "home"},
+        },
+        [],
+    )
+
+    assert logistics["accommodation"] == {
+        "mode": "home",
+        "area": "住家里",
+        "nights": 0,
+        "rooms": 0,
+        "nightly_rate": 0.0,
+        "cost": 0.0,
+        "status": "not_required",
+    }
+
+
+def test_home_lodging_omits_hotel_booking_and_cost():
+    """Breaks if residents are assigned a hotel despite lodging_mode=home."""
+    logistics = build_travel_logistics(
+        {
+            "origin": "北京",
+            "destination": "北京",
+            "start_date": "2026-09-01",
+            "duration": 3,
+            "structured_preferences": {"lodging_mode": "home"},
+        },
+        [],
+    )
+
+    assert logistics["accommodation"] == {
+        "mode": "home",
+        "area": "住家里",
+        "nights": 0,
+        "rooms": 0,
+        "nightly_rate": 0.0,
+        "cost": 0.0,
+        "status": "not_required",
+    }
+
+
 def test_local_transport_legs_use_item_locations_and_preferred_mode():
     itinerary = [
         {
@@ -167,3 +215,22 @@ def test_logistics_validation_rejects_pending_intercity_cost_and_invalid_hotel_t
 
     assert any("待补充" in error for error in errors)
     assert any("住宿费用" in error for error in errors)
+
+
+def test_logistics_validation_accepts_home_lodging_without_hotel_nights():
+    """Residents must not be retried because their no-hotel logistics has zero nights."""
+    from src.graph.validator import _validate_travel_logistics
+
+    errors = _validate_travel_logistics(
+        {"duration": 3},
+        {
+            "intercity_legs": [],
+            "accommodation": {
+                "mode": "home", "nights": 0, "rooms": 0,
+                "nightly_rate": 0, "cost": 0, "status": "not_required",
+            },
+            "local_transport_legs": [],
+        },
+    )
+
+    assert errors == []

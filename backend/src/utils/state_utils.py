@@ -153,6 +153,12 @@ def get_hotel_preference(state: TravelAgentState) -> Optional[str]:
     return hotel if isinstance(hotel, str) and hotel else None
 
 
+def get_lodging_mode(state: TravelAgentState) -> str:
+    """获取住宿方式；缺失或非法值保持酒店模式以兼容既有会话。"""
+    mode = get_structured_preferences(state).get("lodging_mode")
+    return mode if mode in {"hotel", "home"} else "hotel"
+
+
 # 获取市内交通偏好列表（metro/bus/taxi/self_driving/bike/walking）。
 def get_local_transport(state: TravelAgentState) -> List[str]:
     preferences = get_structured_preferences(state)

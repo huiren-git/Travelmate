@@ -88,6 +88,12 @@ function mapStatus(value: unknown) {
   return '待确认'
 }
 
+function formatPriceLabel(amount: number | undefined, estimateSource: string | undefined) {
+  if (estimateSource === 'free') return '免费'
+  if (amount === undefined) return '待估算'
+  return estimateSource === 'rule' ? `规则估算 ¥${amount}` : `¥${amount}`
+}
+
 function extractItinerarySource(state: Record<string, unknown>) {
   return state.daily_itinerary ?? state.itinerary ?? state.plan
 }
@@ -144,12 +150,16 @@ function collectItemsFromDay(day: unknown, dayIndex: number) {
       const imageUrl = firstString(item.image_url) ?? ''
       const tips = firstString(item.tips) ?? ''
 
+      const price = firstNumber(item.priceCny, item.price, item.cost, item.amount, item.budget)
+      const estimateSource = firstString(item.estimate_source, item.estimateSource)
+
       return {
         id: `${date}-${dayIndex}-${itemIndex}`,
         date,
         attractionName,
         timeRange,
-        priceCny: firstNumber(item.priceCny, item.price, item.cost, item.amount, item.budget) ?? 0,
+        priceCny: price ?? 0,
+        priceLabel: formatPriceLabel(price, estimateSource),
         status: mapStatus(item.status),
         imageUrl,
         category: normalizeCategory(item.category ?? item.type ?? item.cost_category ?? attractionName),
@@ -267,7 +277,7 @@ function normalizeLogistics(source: unknown): TravelLogistics | undefined {
   return {
     origin: firstString(source.origin), destination: firstString(source.destination) ?? '目的地', includeReturn: Boolean(source.include_return),
     intercityLegs: legs.filter(isRecord).map((leg) => ({ kind: firstString(leg.kind) ?? 'outbound', origin: firstString(leg.origin), destination: firstString(leg.destination) ?? '目的地', mode: firstString(leg.mode) ?? '待定', cost: firstNumber(leg.cost) ?? 0, status: firstString(leg.status) ?? 'pending', message: firstString(leg.message), estimateSource: firstString(leg.estimate_source) })),
-    accommodation: { area: firstString(source.accommodation.area) ?? '待定', nights: firstNumber(source.accommodation.nights) ?? 0, rooms: firstNumber(source.accommodation.rooms) ?? 1, cost: firstNumber(source.accommodation.cost) ?? 0, status: firstString(source.accommodation.status) ?? 'estimated', level: firstString(source.accommodation.level) ?? 'mid', estimateSource: firstString(source.accommodation.estimate_source) },
+    accommodation: { area: firstString(source.accommodation.area) ?? '待定', nights: firstNumber(source.accommodation.nights) ?? 0, rooms: firstNumber(source.accommodation.rooms) ?? 1, cost: firstNumber(source.accommodation.cost) ?? 0, status: firstString(source.accommodation.status) ?? 'estimated', level: firstString(source.accommodation.level) ?? 'mid', mode: firstString(source.accommodation.mode) === 'home' ? 'home' : 'hotel', estimateSource: firstString(source.accommodation.estimate_source) },
     localTransportLegs: local.filter(isRecord).map((leg) => ({ date: firstString(leg.date) ?? '', fromName: firstString(leg.from_name) ?? '上一站', toName: firstString(leg.to_name) ?? '下一站', mode: firstString(leg.mode) ?? '地铁', cost: firstNumber(leg.cost) ?? 0, distanceKm: firstNumber(leg.distance_km), durationMinutes: firstNumber(leg.duration_minutes), estimateSource: firstString(leg.estimate_source) })),
   }
 }

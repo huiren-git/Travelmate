@@ -103,6 +103,14 @@ def parse_structured_preferences(raw: Optional[Dict[str, Any]]) -> Dict[str, Any
     if hotel:
         result["hotel_preference"] = hotel
 
+    lodging_mode = str(raw.get("lodging_mode") or "").strip()
+    if lodging_mode in {"hotel", "home"}:
+        result["lodging_mode"] = lodging_mode
+
+    lodging_mode = str(raw.get("lodging_mode") or "").strip()
+    if lodging_mode in {"hotel", "home"}:
+        result["lodging_mode"] = lodging_mode
+
     intercity = _INTERCITY_MAP.get(str(raw.get("intercity_transport") or "").strip())
     if intercity is not None:  # 空列表也是合法值
         result["intercity_transport"] = intercity

@@ -264,3 +264,135 @@ async def test_supervisor_detects_replan_from_existing_itinerary(monkeypatch):
     assert result["next_node"] == "itinerary_agent"
     assert result["plan_mode"] == "replan"
     assert result["current_mode"] == "replan"
+
+
+@pytest.mark.asyncio
+async def test_supervisor_answers_consult_without_mutating_trip_state(monkeypatch):
+    """A travel question must end with text and leave the saved trip untouched."""
+    from src.agents import supervisor as supervisor_module
+    from src.agents.supervisor import supervisor_node
+
+    state = _initial_state("北京十月需要带什么衣服？")
+    state["destination"] = "北京"
+    state["duration"] = 2
+    state["daily_itinerary"] = _itinerary_payload()["daily_itinerary"]
+    state["budget"] = _budget_payload()["budget"]
+    routing_llm = FakeJsonLLM(
+        {
+            "intent": "consult",
+            "next_node": "__end__",
+            "plan_mode": "plan",
+            "destination": None,
+            "duration": None,
+            "reply": "十月北京早晚偏凉，建议带一件保暖外套。",
+            "reason": "用户在咨询出行准备。",
+        }
+    )
+    monkeypatch.setattr(supervisor_module, "get_supervisor_llm", lambda: routing_llm)
+
+    result = await supervisor_node(state)
+
+    assert result["intent"] == "consult"
+    assert result["is_finished"] is True
+    assert result["messages"][0].content == "十月北京早晚偏凉，建议带一件保暖外套。"
+    assert "daily_itinerary" not in result
+    assert "budget" not in result
+    assert "structured_preferences" not in result
+
+
+@pytest.mark.asyncio
+async def test_supervisor_persists_preference_updates_without_replanning(monkeypatch):
+    """Changing origin/travelers updates state and only routes existing plans to budget refresh."""
+    from src.agents import supervisor as supervisor_module
+    from src.agents.supervisor import supervisor_node
+
+    state = _initial_state("我改从杭州出发，两个人，预算5000元")
+    state["destination"] = "北京"
+    state["duration"] = 2
+    state["daily_itinerary"] = _itinerary_payload()["daily_itinerary"]
+    routing_llm = FakeJsonLLM(
+        {
+            "intent": "update_preferences",
+            "next_node": "budget_agent",
+            "plan_mode": "plan",
+            "destination": None,
+            "duration": None,
+            "origin": "杭州",
+            "travelers": 2,
+            "budget_max": 5000,
+            "preference_updates": {"travelers": 2},
+            "reply": None,
+            "reason": "用户更新出发信息和预算。",
+        }
+    )
+    monkeypatch.setattr(supervisor_module, "get_supervisor_llm", lambda: routing_llm)
+
+    result = await supervisor_node(state)
+
+    assert result["intent"] == "update_preferences"
+    assert result["next_node"] == "budget_agent"
+    assert result["origin"] == "杭州"
+    assert result["structured_preferences"]["travelers"] == 2
+    assert result["budget_max_allowed"] == 5000
+    assert "daily_itinerary" not in result
+    assert "draft_daily_itinerary" not in result
+
+
+@pytest.mark.asyncio
+async def test_supervisor_persists_home_lodging_from_natural_language(monkeypatch):
+    """Breaks if a request to stay at home is not retained as a preference update."""
+    from src.agents import supervisor as supervisor_module
+    from src.agents.supervisor import supervisor_node
+
+    state = _initial_state("我们都住在北京，不需要安排住宿和酒店")
+    state["destination"] = "北京"
+    state["duration"] = 2
+    routing_llm = FakeJsonLLM(
+        {
+            "intent": "update_preferences",
+            "next_node": "__end__",
+            "plan_mode": "plan",
+            "destination": None,
+            "duration": None,
+            "preference_updates": {"lodging_mode": "home"},
+            "reply": None,
+            "reason": "用户住在本地。",
+        }
+    )
+    monkeypatch.setattr(supervisor_module, "get_supervisor_llm", lambda: routing_llm)
+
+    result = await supervisor_node(state)
+
+    assert result["structured_preferences"]["lodging_mode"] == "home"
+    assert result["is_finished"] is True
+
+
+@pytest.mark.asyncio
+async def test_supervisor_asks_for_scope_before_replanning(monkeypatch):
+    """A generic request to adjust an existing itinerary must not enter the itinerary agent."""
+    from src.agents import supervisor as supervisor_module
+    from src.agents.supervisor import supervisor_node
+
+    state = _initial_state("帮我调整一下行程")
+    state["destination"] = "北京"
+    state["duration"] = 2
+    state["daily_itinerary"] = _itinerary_payload()["daily_itinerary"]
+    routing_llm = FakeJsonLLM(
+        {
+            "intent": "replan",
+            "next_node": "itinerary_agent",
+            "plan_mode": "replan",
+            "destination": None,
+            "duration": None,
+            "reply": None,
+            "reason": "用户想调整已有行程，但没有给出范围。",
+        }
+    )
+    monkeypatch.setattr(supervisor_module, "get_supervisor_llm", lambda: routing_llm)
+
+    result = await supervisor_node(state)
+
+    assert result["intent"] == "replan"
+    assert result["next_node"] == "__end__"
+    assert result["is_finished"] is True
+    assert "哪一天" in result["messages"][0].content

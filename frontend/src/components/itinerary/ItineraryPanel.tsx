@@ -68,7 +68,7 @@ export function ItineraryPanel({
                   <div className="mt-1 text-[12px] text-slate-500 dark:text-slate-400">{item.timeRange}</div>
                 </div>
                 <div className="shrink-0 text-right">
-                  <div className="text-[14px] font-semibold text-slate-900 dark:text-slate-100">¥{item.priceCny}</div>
+                  <div className="text-[14px] font-semibold text-slate-900 dark:text-slate-100">{item.priceLabel ?? `¥${item.priceCny}`}</div>
                   <div className="mt-1">
                     <ItineraryStatusTag status={item.status} />
                   </div>

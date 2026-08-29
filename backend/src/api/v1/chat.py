@@ -180,6 +180,7 @@ def _initial_state(request: ChatStreamRequest, user_id: str) -> Dict[str, Any]:
         "auto_reduce_budget": False,
         "draft_daily_itinerary": None,
         "draft_budget": None,
+        "intent": "plan",
         "plan_mode": "plan",
         "current_mode": "plan",
         "current_time": request.current_time,

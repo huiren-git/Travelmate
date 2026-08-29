@@ -6,11 +6,13 @@ from fastapi.responses import StreamingResponse
 
 from src.core.exceptions import AppException
 from src.core.tracing import generate_trace_id, set_trace_id
-from src.graph.reference_validator import reference_validator_node
+from src.graph.graph import build_reference_adoption_graph, get_graph_async
 from src.models.common import ApiResponse
 from src.models.reference import AdoptReferenceRequest
-from src.services.reference_adapter import adapt_reference_trip
+from src.agents.cost_enrich import enrich_itinerary_costs
+from src.services.reference_adapter import adapt_reference_trip, build_reference_budget
 from src.services.reference_trip_service import get_reference_trip, increment_reference_usage, list_reference_trips
+from src.services.travel_logistics import build_travel_logistics, enrich_local_transport_legs
 from src.services.tracing_db import end_trace, start_trace
 
 router = APIRouter(prefix="/reference")
@@ -44,12 +46,37 @@ async def adopt_reference(reference_id: int, request: AdoptReferenceRequest, use
     async def stream():
         try:
             draft, log = await adapt_reference_trip(reference, duration=request.duration, start_date=request.start_date, travelers=request.travelers)
-            state = {**draft, "thread_id": request.thread_id, "user_id": user_id, "destination": reference["destination"], "duration": request.duration, "structured_preferences": request.structured_preferences or {}, "is_finished": False, "terminal_status": "running"}
+            preferences = {**(request.structured_preferences or {}), "travelers": request.travelers}
+            state = {
+                **draft,
+                "thread_id": request.thread_id,
+                "user_id": user_id,
+                "destination": reference["destination"],
+                "start_date": request.start_date,
+                "duration": request.duration,
+                "travelers": request.travelers,
+                "structured_preferences": preferences,
+                "is_finished": False,
+                "terminal_status": "running",
+            }
+            await enrich_itinerary_costs(state["draft_daily_itinerary"], state)
+            logistics = build_travel_logistics(state, state["draft_daily_itinerary"])
+            await enrich_local_transport_legs(logistics["local_transport_legs"])
+            state["travel_logistics"] = logistics
+            state["draft_budget"] = build_reference_budget(
+                state["draft_daily_itinerary"],
+                logistics,
+                str(preferences.get("budget_level") or "mid"),
+            )
             yield _sse("adaptation", {"reference_id": reference_id, "entries": log})
-            result = await reference_validator_node(state)
-            final = {**state, **result}
-            yield _sse("node", {"thread_id": request.thread_id, "node": "reference_validator", "data": result})
-            if result["terminal_status"] == "confirmed":
+            main_graph = await get_graph_async()
+            adoption_graph = build_reference_adoption_graph(checkpointer=main_graph.checkpointer)
+            final = await adoption_graph.ainvoke(
+                state,
+                {"configurable": {"thread_id": request.thread_id}},
+            )
+            yield _sse("node", {"thread_id": request.thread_id, "node": "reference_validator", "data": final})
+            if final["terminal_status"] == "confirmed":
                 await increment_reference_usage(reference_id)
             await end_trace(trace_id, status="success")
             yield _sse("done", {"values": final, "next": [], "tasks": []})

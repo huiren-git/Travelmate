@@ -85,6 +85,45 @@ async def fetch_activity_image_url(city: str, activity: str) -> str:
             )
             return ""
 
+
+async def fetch_poi_detail(city: str, name: str) -> Optional[Dict[str, Any]]:
+    """按城市和名称查询高德 POI，并返回行程展示和定价需要的字段。"""
+    city_text, name_text = str(city or "").strip(), str(name or "").strip()
+    if not city_text or not name_text or not settings.amap_api_key:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                "https://restapi.amap.com/v3/place/text",
+                params={
+                    "keywords": name_text,
+                    "city": city_text,
+                    "citylimit": "true",
+                    "offset": 10,
+                    "page": 1,
+                    "extensions": "all",
+                    "key": settings.amap_api_key,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+        if data.get("status") != "1":
+            return None
+        pois = data.get("pois") or []
+        poi = next((item for item in pois if item.get("name") == name_text), pois[0] if pois else None)
+        if not isinstance(poi, dict):
+            return None
+        return {
+            "name": poi.get("name") or name_text,
+            "address": poi.get("address") or "",
+            "location": poi.get("location") or "",
+            "price": (poi.get("biz_ext") or {}).get("cost"),
+            "image_url": _first_photo_url(poi),
+        }
+    except Exception:
+        logger.error("高德 POI 查询失败: city=%s name=%s", city_text, name_text)
+        return None
+
 # 获取城市景点数据，优先读取统一 Redis 缓存，未命中时调用高德地图 API。
 async def fetch_attractions_with_cache(
     city: str,

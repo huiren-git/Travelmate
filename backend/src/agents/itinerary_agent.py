@@ -615,6 +615,7 @@ def _state_payload(
         "pace": get_pace(state),
         "interests": get_interests(state),
         "hotel_preference": get_hotel_preference(state),
+        "lodging_mode": get_structured_preferences(state).get("lodging_mode") or "hotel",
         "local_transport": get_local_transport(state),
         "weather_info": state.get("weather_info"),
         "fetched_attractions": state.get("fetched_attractions"),
@@ -694,7 +695,7 @@ JSON schema:
 - 偏好硬约束（必须遵守，不得遗漏）：
   - pace（顶层字段，intensive/relaxed）：intensive 每天安排 5-7 个 item（含午晚餐），景点密集、时间紧凑；relaxed 每天安排 3-4 个 item（含午晚餐），留白休息、避免早出晚归。
   - interests（顶层字段，可能含 history/culture/food/nature/shopping/art/nightlife）：景点选择必须优先匹配 interests 中的类别；含 history 或 culture 时每天至少 1 个历史/文化类景点；含 nature 时每天至少 1 个自然景观；含 food 时餐食突出目的地特色；含 shopping 时安排商圈；含 art 时安排美术馆/艺术区；含 nightlife 时安排夜间活动。interests 为空则按通用推荐（历史+美食为主）。
-  - hotel_preference（顶层字段，economy/mid/luxury）：住宿选址必须匹配等级——economy 选交通枢纽附近的经济型商圈；mid 选中档商圈/商务区；luxury 选核心商圈/高端酒店区。住宿信息体现在对应 item 的 address 或 tips（如“住宿：XX商圈，中档”）。
+  - lodging_mode 为 home 时，不得安排酒店、民宿或住宿费用；每日从住处出发并返回住处。否则 hotel_preference（顶层字段，economy/mid/luxury）决定住宿选址与等级。
   - local_transport（顶层字段，可能含 metro/bus/taxi/self_driving/bike/walking）：市内交通方式必须落在 local_transport 列表内，不得主推未列出的方式；在景点间移动的 tips 标注主推交通（如“地铁2号线至XX站”）。含 metro 时市内优先地铁；不含 metro 不得主推地铁。local_transport 为空则按目的地通用推荐。
 - 可参考 relevant_action_logs 中的历史调整进行个性化；但当前用户需求、preferences 和 user_decision 优先级更高。
 - REPLAN 模式下，若 user_decision 存在，必须优先遵循其修改意图：

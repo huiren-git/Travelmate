@@ -32,6 +32,7 @@ const hotelOptions: NonNullable<StructuredPreferences['hotel_preference']>[] = [
   '高端酒店',
   '特色民宿',
 ]
+const lodgingModeOptions: NonNullable<StructuredPreferences['lodging_mode']>[] = ['hotel', 'home']
 const intercityTransportOptions: NonNullable<StructuredPreferences['intercity_transport']>[] = ['火车', '飞机', '自驾', '无偏好']
 const localTransportOptions: NonNullable<StructuredPreferences['local_transport']>[] = ['步行', '公共交通', '打车', '网约车/专车', '租车', '无偏好']
 
@@ -168,6 +169,9 @@ export function ChatInput({
                 placeholder={t('chat.hotelPlaceholder')}
                 options={hotelOptions.map((value) => ({ label: t(`chat.opt.hotel.${value}`), value }))}
               />
+            </Form.Item>
+            <Form.Item label="住宿方式" name="lodging_mode">
+              <Select allowClear placeholder="选择住宿方式" options={lodgingModeOptions.map((value) => ({ label: value === 'home' ? '住家里（不安排酒店）' : '酒店住宿', value }))} />
             </Form.Item>
 
             <Form.Item label={t('chat.intercityTransport')} name="intercity_transport">

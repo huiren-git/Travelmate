@@ -137,12 +137,15 @@ async def enrich_itinerary_costs(
                 if price is not None:
                     item["cost"] = round(price * travelers, 2)
                     item["cost_category"] = "food" if category == "food" else "tickets"
+                    item["estimate_source"] = "free" if price == 0 else "amap"
                 else:  # POI 无价格 -> 退方法3
                     item["cost"] = _fallback_estimate(item, state)
                     item["cost_category"] = category
+                    item["estimate_source"] = "rule" if item["cost"] > 0 else "pending"
             else:  # 无匹配 -> 方法3 兜底
                 item["cost"] = _fallback_estimate(item, state)
                 item["cost_category"] = category
+                item["estimate_source"] = "rule" if item["cost"] > 0 else "pending"
             # 方法2：到达本 item 的交通腿费（每日首 item 为 0）
             item["leg_transport_cost"] = (
                 await _leg_transport_cost(items[idx - 1], item, state) if idx > 0 else 0.0
