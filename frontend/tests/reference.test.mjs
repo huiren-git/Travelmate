@@ -45,3 +45,21 @@ test('adapted reference items distinguish estimated, free, and pending prices wh
   assert.equal(plan.itinerary[1].priceLabel, '免费')
   assert.equal(plan.itinerary[2].priceLabel, '待估算')
 })
+
+test('adapted itinerary item exposes the backend duration for rendering', async () => {
+  const { adaptGeneratedTripPlan } = await import('../src/utils/chatPlanAdapter.ts')
+  const plan = adaptGeneratedTripPlan({
+    values: {
+      terminal_status: 'confirmed',
+      is_finished: true,
+      budget: { total: 100, detail: { tickets: 100 } },
+      daily_itinerary: [{
+        date: '2026-09-01',
+        items: [{ activity: '故宫', time: '09:00', duration: '3h', cost: 100 }],
+      }],
+    },
+  })
+
+  assert.equal(plan.itinerary[0].timeRange, '09:00')
+  assert.equal(plan.itinerary[0].duration, '3h')
+})

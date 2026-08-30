@@ -79,7 +79,7 @@ async def adopt_reference(reference_id: int, request: AdoptReferenceRequest, use
             if final["terminal_status"] == "confirmed":
                 await increment_reference_usage(reference_id)
             await end_trace(trace_id, status="success")
-            yield _sse("done", {"values": final, "next": [], "tasks": []})
+            yield _sse("done", {"trace_id": trace_id, "values": final, "next": [], "tasks": []})
         except asyncio.CancelledError:
             await end_trace(trace_id, status="cancelled")
             raise

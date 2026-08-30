@@ -191,7 +191,13 @@ def _task_item(task: Any) -> Dict[str, Any]:
         "status": status,
         "output": _jsonable(result),
         "error": str(error) if error else None,
-        "interrupts": _jsonable(interrupts),
+        "interrupts": [
+            {
+                "id": getattr(item, "id", None) or getattr(item, "interrupt_id", None),
+                "value": _jsonable(getattr(item, "value", item)),
+            }
+            for item in interrupts
+        ],
     }
 
 

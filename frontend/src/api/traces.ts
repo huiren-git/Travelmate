@@ -6,9 +6,9 @@ import type {
   TraceSummaryData,
 } from '../types/trace'
 import { useAppSettingsStore } from '../store/useAppSettingsStore'
+import { USER_ID } from './chat'
 
 const API_BASE_URL = '/api/v1'
-const USER_ID = 'demo-user'
 
 /** 节点展示名映射（用于友好展示，未知节点回退到原 node_name） */
 export const NODE_LABELS: Record<string, { zh: string; en: string }> = {

@@ -1,4 +1,4 @@
-import { API_BASE_URL, USER_ID, type ParsedSseEvent } from './chat'
+import { API_BASE_URL, USER_ID, type ParsedSseEvent } from './chat.ts'
 
 export type ReferenceTrip = {
   id: number

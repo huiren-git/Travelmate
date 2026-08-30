@@ -15,6 +15,7 @@ class StructuredPreferencesInput(BaseModel):
     """
 
     budget_level: Optional[str] = None
+    start_date: Optional[str] = None
     pace: Optional[str] = None
     interests: Optional[list[str]] = None
     travelers: Optional[int] = None

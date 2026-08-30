@@ -48,7 +48,13 @@ type ParseSseResult = {
 }
 
 export const API_BASE_URL = '/api/v1'
-export const USER_ID = 'demo-user'
+const USER_ID_STORAGE_KEY = 'travelmate-user-id'
+export let USER_ID = typeof localStorage === 'undefined' ? '1' : localStorage.getItem(USER_ID_STORAGE_KEY) || '1'
+
+export function setUserId(userId: string) {
+  USER_ID = userId
+  if (typeof localStorage !== 'undefined') localStorage.setItem(USER_ID_STORAGE_KEY, userId)
+}
 
 export function createChatThreadId() {
   const bytes = new Uint8Array(8)

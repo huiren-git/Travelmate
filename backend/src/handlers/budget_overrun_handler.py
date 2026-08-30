@@ -68,7 +68,7 @@ class BudgetOverrunHandler(InterruptHandler):
             "description": f"当前预算为 {budget['total']} 元，超出上限 {overrun_percent}%。请选择如何处理。",
             "options": [
                 {"id": "accept", "label": "接受超支，继续规划", "default": False},
-                {"id": "adjust", "label": "调整预算等级或削减行程", "default": True, "ui_hint": "select"},
+            {"id": "modify", "label": "调整预算等级或削减行程", "default": True, "ui_hint": "select"},
             ],
             "extra": {
                 "current_budget": budget,
@@ -84,17 +84,13 @@ class BudgetOverrunHandler(InterruptHandler):
         if action == "accept":
             # 直接继续，不做修改
             return {}  # 返回空更新，图继续执行
-        elif action == "adjust":
+        elif action == "modify":
             # 用户可能提高了预算等级，或要求削减行程
             new_level = payload.get("level") if payload else None
             if new_level and new_level != state.get("budget_level"):
                 # 更新预算等级，清空草稿，让 Itinerary 重新生成
-                return {
-                    "budget_level": new_level,
-                    "temp_itinerary": None,  # 强制重新生成
-                    # 可添加路由指示，但这里假设 validator 后续会检查
-                }
+                return {"budget_level": new_level, "auto_reduce_budget": True}
             else:
                 # 可能用户选择了削减行程，但这里简化处理
-                return {"temp_itinerary": None}  # 重新生成
+                return {"auto_reduce_budget": True}
         return {}

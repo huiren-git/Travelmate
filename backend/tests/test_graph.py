@@ -48,7 +48,7 @@ def _fake_itinerary_agent(calls):
         calls.append("itinerary_agent")
         assert state["current_mode"] == "plan"
         return {
-            "daily_itinerary": [
+            "draft_daily_itinerary": [
                 {
                     "day": 1,
                     "date": "2026-08-10",
@@ -146,6 +146,9 @@ def _build_graph_with_fakes(monkeypatch, tmp_path, calls, next_node):
     monkeypatch.setattr(graph_module, "supervisor_node", _fake_supervisor(calls, next_node))
     monkeypatch.setattr(graph_module, "itinerary_agent_node", _fake_itinerary_agent(calls))
     monkeypatch.setattr(graph_module, "budget_agent_node", _fake_budget_agent(calls))
+    async def fake_summary(*_args, **_kwargs):
+        return "行程已生成"
+    monkeypatch.setattr("src.graph.validator._generate_summary_text", fake_summary)
     return graph_module, graph_module.build_graph(str(tmp_path / "travelmate-test.db"))
 
 

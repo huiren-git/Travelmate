@@ -274,8 +274,14 @@ async def supervisor_node(state: TravelAgentState) -> Dict[str, Any]:
         "current_mode": decision["plan_mode"],
         "is_finished": False,
     }
-    if decision["intent"] == "update_preferences":
-        update.update(_preference_state_update(state, decision))
+    if decision.get("preference_updates") or decision["intent"] == "update_preferences":
+        preferences = dict(state.get("structured_preferences") or {})
+        preferences.update(decision.get("preference_updates") or {})
+        if decision.get("travelers"):
+            preferences["travelers"] = decision["travelers"]
+        update["structured_preferences"] = preferences
+        if decision["intent"] == "update_preferences":
+            update.update(_preference_state_update(state, decision))
 
     if decision.get("destination") and not get_destination(state, default=None):
         update["destination"] = decision["destination"]

@@ -26,6 +26,7 @@ from src.models.chat import (
 from src.models.common import ApiResponse
 from src.utils.preferences_parser import parse_structured_preferences
 from src.services.travel_logistics import confirm_logistics_item
+from src.handlers.registry import get_handler
 
 from src.core.tracing import set_trace_id, generate_trace_id, get_trace_id
 from src.services.tracing_db import start_trace, end_trace
@@ -288,6 +289,18 @@ def _has_interrupt(snapshot: Any) -> bool:
     return False
 
 
+def _interrupt_type(snapshot: Any) -> Optional[str]:
+    """从 checkpoint 任务中提取当前可恢复的中断类型。"""
+    for task in getattr(snapshot, "tasks", ()) or ():
+        for item in getattr(task, "interrupts", ()) or ():
+            value = getattr(item, "value", item)
+            if isinstance(value, dict) and isinstance(value.get("type"), str):
+                return value["type"]
+            if isinstance(value, str):
+                return "budget_overrun" if value == "budget_confirmation" else value
+    return None
+
+
 # 将 graph 更新转换成可供前端消费的节点事件。
 def _node_event(thread_id: str, update: Any) -> Dict[str, Any]:
     if isinstance(update, dict) and len(update) == 1:
@@ -344,6 +357,7 @@ async def _run_graph(
         # 4. 获取最终状态快照（用于 "done" 事件）
         final_state = await graph.aget_state(config)
         snapshot = {
+            "trace_id": run.trace_id,
             "values": final_state.values,
             "next": getattr(final_state, "next", ()),
             "tasks": _serialize_interrupts(getattr(final_state, "tasks", ())),
@@ -561,8 +575,43 @@ async def resume_chat(
         ) from exc
 
     await _store_user_decision_memory(user_id, request.thread_id, decision)
+    interrupt_type = _interrupt_type(snapshot)
+    handler_update: Dict[str, Any] = {}
+    if interrupt_type:
+        try:
+            handler_update = get_handler(interrupt_type).handle_resume(values, decision["action"], decision)
+        except Exception as exc:
+            logger.exception("Unable to handle resume decision: type=%s", interrupt_type)
+            raise AppException(
+                code=50301,
+                message="恢复流程暂时不可用，请稍后重试",
+                status_code=503,
+                details={"error": str(exc)},
+            ) from exc
+
+    if decision["action"] == "modify" and interrupt_type == "budget_overrun":
+        await graph.aupdate_state(
+            _thread_config(request.thread_id),
+            {
+                **handler_update,
+                "user_decision": decision,
+                "intent": "replan",
+                "plan_mode": "replan",
+                "current_mode": "replan",
+                "next_node": "itinerary_agent",
+                "is_finished": False,
+                "terminal_status": "running",
+                "failure_reason": None,
+            },
+        )
     trace_id = generate_trace_id()
     set_trace_id(trace_id)
+    await start_trace(
+        trace_id=trace_id,
+        thread_id=request.thread_id,
+        user_id=user_id,
+        input_message=f"恢复生成：{decision['action']}",
+    )
     run = ActiveRun(thread_id=request.thread_id, user_id=user_id, trace_id = trace_id)
     _active_runs[request.thread_id] = run
     run.task = asyncio.create_task(

@@ -1,0 +1,18 @@
+[
+  {"id":"A-01","user_id":"benchmark-a","steps":[{"message":"从上海去北京玩3天，2人，预算4000元，喜欢历史和美食，节奏轻松。"}],"rules":["three_days","valid_structure"]},
+  {"id":"A-02","user_id":"benchmark-a","steps":[{"message":"北京3日游，2人总预算800元。","resume":"accept"}],"rules":["budget_handling","valid_structure"]},
+  {"id":"A-03","user_id":"benchmark-a","steps":[{"message":"2个成人带1个儿童去上海迪士尼玩2天，安排轻松。"}],"rules":["two_days","valid_structure"]},
+  {"id":"A-04","user_id":"benchmark-a","steps":[{"message":"带老人去苏州3日游，慢节奏、少步行、少换乘。"}],"rules":["three_days","valid_structure"]},
+  {"id":"A-05","user_id":"benchmark-a","steps":[{"message":"我不吃海鲜，去厦门2天旅游。"}],"rules":["two_days","no_seafood"]},
+  {"id":"A-06","user_id":"benchmark-a","steps":[{"message":"北京3日游，预算4000元。"},{"message":"当前是第一天结束，请把第三天改得更轻松。","current_time":"2026-08-31T23:00:00+08:00"}],"rules":["valid_structure"]},
+  {"id":"A-07","user_id":"benchmark-a","steps":[{"message":"北京3日游，预算4000元。"},{"message":"第三天改去环球影城，其他不动。"}],"rules":["valid_structure"]},
+  {"id":"A-08","user_id":"benchmark-a","steps":[{"message":"杭州周末两天，想轻松看看西湖。"}],"rules":["valid_structure"]},
+  {"id":"A-09","user_id":"benchmark-a","steps":[{"message":"北京3日游，低预算、五星酒店、包车并打卡所有热门景点。"}],"rules":["valid_structure"]},
+  {"id":"A-10","user_id":"benchmark-a","steps":[{"message":"从上海虹桥站出发到杭州，周末两天，全程优先高铁和地铁。"}],"rules":["valid_structure"]},
+  {"id":"A-11","user_id":"benchmark-a","steps":[{"thread_id":"isolation-a","user_id":"benchmark-a","message":"给我安排北京2日游，我喜欢历史古迹。"},{"thread_id":"isolation-b","user_id":"benchmark-b","message":"给我安排北京2日游，我喜欢亲子乐园。"}],"rules":["valid_structure","user_isolation"]},
+  {"id":"A-12","user_id":"benchmark-a","steps":[{"kind":"reference_adopt","reference_id":1,"start_date":"2026-10-10","duration":3,"travelers":2,"destination":"苏州","structured_preferences":{"pace":"relaxed","interests":["园林","古迹"]}},{"message":"把第二天改得更轻松。"}],"rules":["valid_structure","reference_adopted"]},
+  {"id":"P-04","user_id":"benchmark-perf","steps":[{"message":"从上海去北京玩3天，2人，预算4000元，喜欢历史和美食，节奏轻松。"}],"rules":["three_days","valid_structure"]},
+  {"id":"P-05-1d","user_id":"benchmark-perf","steps":[{"message":"北京1日游，2人，预算1500元，历史文化。"}],"rules":["one_day","valid_structure"]},
+  {"id":"P-05-3d","user_id":"benchmark-perf","steps":[{"message":"成都3日游，2人，预算4000元，美食和熊猫。"}],"rules":["three_days","valid_structure"]},
+  {"id":"P-05-7d","user_id":"benchmark-perf","steps":[{"message":"云南7日游，2人，预算9000元，自然风光和慢节奏。"}],"rules":["seven_days","valid_structure"]}
+]
