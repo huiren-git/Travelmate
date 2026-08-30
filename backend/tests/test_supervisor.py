@@ -339,6 +339,26 @@ async def test_supervisor_persists_preference_updates_without_replanning(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_supervisor_persists_plan_preference_updates(monkeypatch):
+    """A new-trip dietary constraint must survive routing into itinerary generation."""
+    from src.agents import supervisor as supervisor_module
+    from src.agents.supervisor import supervisor_node
+
+    state = _initial_state("我不吃海鲜，去厦门2天旅游")
+    routing_llm = FakeJsonLLM(
+        {"intent": "plan", "next_node": "itinerary_agent", "plan_mode": "plan",
+         "destination": "厦门", "duration": 2,
+         "preference_updates": {"dietary_restriction": "no_seafood"},
+         "reason": "生成行程并保留饮食禁忌。"}
+    )
+    monkeypatch.setattr(supervisor_module, "get_supervisor_llm", lambda: routing_llm)
+
+    result = await supervisor_node(state)
+
+    assert result["structured_preferences"]["dietary_restriction"] == "no_seafood"
+
+
+@pytest.mark.asyncio
 async def test_supervisor_persists_home_lodging_from_natural_language(monkeypatch):
     """Breaks if a request to stay at home is not retained as a preference update."""
     from src.agents import supervisor as supervisor_module

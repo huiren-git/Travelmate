@@ -128,6 +128,8 @@ async def enrich_itinerary_costs(
         for idx, item in enumerate(items):
             if not isinstance(item, dict):
                 continue
+            if item.get("status") == "completed":
+                continue
             category = _classify_category(str(item.get("activity", "")))
             poi = _match_poi(item, all_pois)
             if poi:  # 方法1 命中：用 POI 真实单价

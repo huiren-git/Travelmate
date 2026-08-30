@@ -7,8 +7,14 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 from src.api.v1 import chat as chat_api
-from src.api.v1.chat import ChatStreamRequest, ResumeRequest, UserDecision, LogisticsConfirmationRequest
+from src.api.v1.chat import (
+    ChatStreamRequest,
+    LogisticsConfirmationRequest,
+    ResumeRequest,
+    UserDecision,
+)
 from src.core.exceptions import AppException
+from src.models.chat import StructuredPreferencesInput
 
 
 @dataclass
@@ -58,8 +64,10 @@ class FakeGraph:
             await asyncio.Event().wait()
 
         yield {"itinerary_agent": {"daily_itinerary": [{"day": 1}]}}
+        current_values = self.snapshots.get(thread_id, FakeSnapshot(values={})).values
         self.snapshots[thread_id] = FakeSnapshot(
             values={
+                **current_values,
                 "messages": [HumanMessage(content="已生成行程")],
                 "user_id": "user-1",
                 "thread_id": thread_id,
@@ -123,7 +131,35 @@ async def test_chat_stream_returns_sse_events(monkeypatch):
     assert response.media_type == "text/event-stream"
     assert "event: node" in body
     assert "event: done" in body
+    assert "trace_id" in body
     assert graph.stream_inputs
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_preserves_structured_start_date_in_agent_state(monkeypatch):
+    """A structured form date must reach the graph instead of being silently dropped."""
+    graph = FakeGraph()
+
+    async def fake_get_graph():
+        return graph
+
+    monkeypatch.setattr(chat_api, "_get_graph", fake_get_graph)
+
+    response = await chat_api.chat_stream(
+        ChatStreamRequest(
+            thread_id="thread-structured-date",
+            message="帮我安排北京行程",
+            structured_input=StructuredPreferencesInput(
+                start_date="2026-09-01",
+                budget_level="舒适出行",
+            ),
+        ),
+        user_id="user-1",
+    )
+    _ = [chunk async for chunk in response.body_iterator]
+
+    assert graph.stream_inputs[0]["start_date"] == "2026-09-01"
+    assert graph.stream_inputs[0]["structured_preferences"]["budget_level"] == "mid"
 
 
 # 验证 stop 接口能够取消正在执行的 graph 任务并返回部分结果信息。
@@ -161,6 +197,7 @@ async def test_resume_chat_uses_langgraph_command(monkeypatch):
     graph = FakeGraph()
     thread_id = "thread-resume"
     stored_decisions = []
+    started_traces = []
     graph.snapshots[thread_id] = FakeSnapshot(
         values={
             "user_id": "user-1",
@@ -176,8 +213,12 @@ async def test_resume_chat_uses_langgraph_command(monkeypatch):
     async def fake_store_decision(user_id, thread_id, decision):
         stored_decisions.append((user_id, thread_id, decision))
 
+    async def fake_start_trace(**kwargs):
+        started_traces.append(kwargs)
+
     monkeypatch.setattr(chat_api, "_get_graph", fake_get_graph)
     monkeypatch.setattr(chat_api, "_store_user_decision_memory", fake_store_decision)
+    monkeypatch.setattr(chat_api, "start_trace", fake_start_trace)
 
     response = await chat_api.resume_chat(
         ResumeRequest(
@@ -197,6 +238,13 @@ async def test_resume_chat_uses_langgraph_command(monkeypatch):
     assert isinstance(graph.stream_inputs[0], Command)
     assert graph.stream_inputs[0].resume["action"] == "modify"
     assert graph.stream_inputs[0].resume["hint"] == "把预算压缩到 2200 元以内"
+    assert graph.snapshots[thread_id].values["plan_mode"] == "replan"
+    assert graph.snapshots[thread_id].values["current_mode"] == "replan"
+    assert graph.snapshots[thread_id].values["next_node"] == "itinerary_agent"
+    assert len(started_traces) == 1
+    assert started_traces[0]["thread_id"] == thread_id
+    assert started_traces[0]["user_id"] == "user-1"
+    assert started_traces[0]["input_message"] == "恢复生成：modify"
     assert stored_decisions == [
         (
             "user-1",

@@ -176,21 +176,30 @@
 3. **每次版本发布/面试数据更新**：运行 A-01 至 A-12 与 P-04/P-05，保留 Trace ID、原始结果、评分表及模型价格快照。
 4. **失败复盘**：按 Trace ID 定位到具体 Span 与 LLM event，记录失败类别：输入校验、路由、外部依赖、模型输出、状态恢复、前端渲染。
 
-## 6. 面试结果报告模板
+## 6. 面试结果报告（2026-08-30 实测）
 
-| 字段 | 填写示例（必须替换为实测值） |
+| 字段 | 实测结果 |
 | --- | --- |
-| 测试日期/代码版本 | 2026-08-29 / commit `xxxxxxx` |
-| 模型与单价快照 | 模型名、输入/输出单价、币种、生效日期 |
-| 基准样本 | 30 个场景 × 3 次 = 90 次真实执行 |
-| 主流程成功率 | `__%` |
-| 硬约束满足率 | `__%` |
-| 人工质量评分 | `__/5`（双人复核，__ 个样本） |
-| P50 / P95 TTFT | `__ s / __ s` |
-| P50 / P95 E2E 延迟 | `__ s / __ s` |
-| 平均 Token / 单成功行程成本 | `__ / __` |
-| 缓存收益 | `__%` |
-| 已发现并修复的问题 | 问题、影响、修复版本、回归用例 ID |
+| 测试日期/代码版本 | 2026-08-30 / branch `codex/test-p0-validation` / base commit `3ed2308` |
+| 模型与单价快照 | `deepseek-chat`（Trace 原始别名；响应元数据为 DeepSeek V4 Flash）。按官方 2026-08-30 价格快照计费：谷时缓存命中/未命中输入/输出为 `$0.007/$0.22/$0.66` 每百万 Token，峰时翻倍；成本按输入未命中保守估算。 |
+| 测试覆盖 | 核心自动化 54 条：后端核心回归 46、饮食约束修复回归 2、前端单元 6；真实 E2E 基准场景 16 个（A-01~A-12、P-04、P-05 的 1/3/7 日变体）。 |
+| 真实模型执行 | 首轮 A 集 36 次 + 性能集 12 次 = 48 次；饮食约束修复后 A-05 复测 3 次；合计 51 次真实调用。 |
+| 主流程成功率 | 100%（48/48 首轮真实调用均完成并保存 SSE、Trace、Token 与输出 artifact）。 |
+| 硬约束满足率 | 首轮 93.75%（45/48）。未满足的 3 条均为 A-05 的“非海鲜/不含海鲜”文字被关键词规则误判；修复后 A-05 无实际海鲜推荐，但旧关键词判定器仍会将否定语境计为失败。 |
+| 人工质量评分 | 待独立双人评审；已导出匿名样本 36 条、评分表和私有映射表，未虚构评分。 |
+| P50 / P95 TTFT | 2.114 s / 2.629 s（P-04、P-05 共 12 次真实性能样本）。 |
+| P50 / P95 E2E 延迟 | 32.084 s / 90.650 s（同一性能样本；包含外部地图、天气、LLM 与持久化）。 |
+| 平均 Token / 单成功行程成本 | 11,896 Token（48 次首轮真实调用均值） / `$0.00332746`（45 条硬规则通过样本均值）。 |
+| 缓存收益 | Trace 保存总 Token，未保存可计费的缓存命中/未命中拆分；成本统一按缓存未命中估算，故不报告不可复算的收益率。 |
+| 原始证据 | A 集 artifact：`backend/benchmarks/artifacts/20260830-202127`；性能 artifact：`backend/benchmarks/artifacts/20260830-204628`；饮食约束回归 artifact：`backend/benchmarks/artifacts/20260830-210937`。 |
+| 已发现并修复的问题 | 1. `/chat/resume` 生成 Trace ID 但未调用 `start_trace()`，导致恢复链路 Trace 404；补齐 Trace 创建并用 A-02 预算中断→resume 回归。2. Supervisor 已识别 `dietary_restriction=no_seafood`，但计划模式未合并至 `structured_preferences`，Itinerary Agent 和 Validator 均不可见；已合并状态、透传 payload 并加入 Agent 硬规则，以 A-05 真实复测。 |
+
+### 工程案例：用 Trace 定位“不吃海鲜”约束失效
+
+1. A-05 的 Supervisor Trace 已正确解析 `preference_updates.dietary_restriction=no_seafood`。
+2. 同一 Trace 的 Itinerary Agent payload 却显示 `preferences={}`，最终状态 `structured_preferences=null`；约束在 Supervisor 路由到计划模式时未被写回状态。
+3. Validator Trace 同样只收到空 preferences，因此无法拦截“海蛎煎（可要求不加海蛎）”之类的建议。
+4. 修复后，A-05 的 Agent payload 已包含 `preferences.dietary_restriction=no_seafood`，输出改为明确非海鲜餐食；剩余 0/3 硬规则结果来自测试关键词将“非海鲜/不含海鲜”误判为命中，已作为测试判定器缺陷保留。
 
 ## 7. 交付检查清单
 

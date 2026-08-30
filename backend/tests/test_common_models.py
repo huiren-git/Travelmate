@@ -1,4 +1,5 @@
 from src.models.common import ApiResponse, ErrorDetail, ErrorResponse
+from src.graph.state import ItineraryItem
 
 
 def test_common_response_models_share_stable_serialization_shape():
@@ -23,3 +24,7 @@ def test_common_response_models_share_stable_serialization_shape():
         "message": "请求参数校验失败",
         "details": [{"field": "body.name", "error": "字段不能为空"}],
     }
+
+
+def test_itinerary_item_type_declares_estimate_source():
+    assert "estimate_source" in ItineraryItem.__annotations__

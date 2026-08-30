@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 from langchain_core.messages import HumanMessage
+from src.api.v1 import chat as chat_api
+from src.models.chat import ResumeRequest, UserDecision
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -81,7 +83,7 @@ def _initial_state(thread_id: str) -> dict:
 def _assert_trip_state(state: dict) -> None:
     assert state["destination"] == CITY
     assert state["duration"] == 3
-    assert state["next_node"] == "itinerary_agent"
+    assert state["next_node"] == "budget_agent"
     assert state["is_finished"] is True
     assert state["validation_report"]["passed"] is True
     assert state["weather_info"]["city"] == CITY
@@ -92,7 +94,8 @@ def _assert_trip_state(state: dict) -> None:
     assert isinstance(state["daily_itinerary"], list)
     assert len(state["daily_itinerary"]) == 3
     assert all(day.get("items") for day in state["daily_itinerary"])
-    assert state["budget"] is None
+    assert isinstance(state["budget"], dict)
+    assert state["budget"]["total"] > 0
 
 
 # 查询 SQLite checkpoint 表中指定 thread_id 的记录数。
@@ -134,6 +137,20 @@ async def test_beijing_three_day_trip_plan_real_api_llm_and_sqlite_persistence(m
             await checkpointer.setup()
         graph = build_graph(checkpointer=checkpointer)
         final_state = await graph.ainvoke(_initial_state(thread_id), config=config)
+        if "__interrupt__" in final_state:
+            async def fake_get_graph():
+                return graph
+
+            monkeypatch.setattr(chat_api, "_get_graph", fake_get_graph)
+            response = await chat_api.resume_chat(
+                ResumeRequest(
+                    thread_id=thread_id,
+                    user_decision=UserDecision(action="accept"),
+                ),
+                user_id="integration-test-user",
+            )
+            _ = [chunk async for chunk in response.body_iterator]
+            final_state = (await graph.aget_state(config)).values
         persisted_snapshot = await graph.aget_state(config)
 
     _assert_trip_state(final_state)

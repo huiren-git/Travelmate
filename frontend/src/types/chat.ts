@@ -48,6 +48,7 @@ export type ItineraryItem = {
   date: string
   attractionName: string
   timeRange: string
+  duration?: string
   priceCny: number
   priceLabel?: string
   status: ItineraryStatus

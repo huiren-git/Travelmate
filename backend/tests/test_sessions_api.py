@@ -155,7 +155,7 @@ async def test_get_sessions_filters_owner_and_paginates(monkeypatch):
 
     assert first_page.code == 200
     assert first_page.data.sessions[0].thread_id == "thread-new"
-    assert first_page.data.sessions[0].status == "confirmed"
+    assert first_page.data.sessions[0].status == "completed"
     assert first_page.data.has_more is True
     assert first_page.data.next_cursor == "2026-08-03T10:00:00Z"
     assert [item.thread_id for item in second_page.data.sessions] == ["thread-old"]

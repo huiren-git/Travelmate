@@ -158,6 +158,7 @@ function collectItemsFromDay(day: unknown, dayIndex: number) {
         date,
         attractionName,
         timeRange,
+        duration: firstString(item.duration),
         priceCny: price ?? 0,
         priceLabel: formatPriceLabel(price, estimateSource),
         status: mapStatus(item.status),

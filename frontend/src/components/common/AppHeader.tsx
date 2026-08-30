@@ -1,4 +1,5 @@
-import { Avatar, Button, Layout } from 'antd'
+import { Avatar, Button, InputNumber, Layout } from 'antd'
+import { useState } from 'react'
 import {
   ApartmentOutlined,
   CompassOutlined,
@@ -13,6 +14,7 @@ import { userProfile } from '../../assets/profile/profileData'
 import { useAppSettingsStore } from '../../store/useAppSettingsStore'
 import { getTravelmateTheme } from '../../utils/theme'
 import { useI18n } from '../../i18n'
+import { setUserId, USER_ID } from '../../api/chat'
 
 const { Header } = Layout
 
@@ -21,6 +23,7 @@ export function AppHeader() {
   const theme = useAppSettingsStore((state) => state.theme)
   const colors = getTravelmateTheme(theme)
   const { t } = useI18n()
+  const [userId, setUserIdValue] = useState(Number(USER_ID))
 
   return (
     <Header
@@ -80,6 +83,21 @@ export function AppHeader() {
         <Button type="text" icon={<SettingOutlined />} style={{ color: colors.textPrimary }} onClick={() => navigate('/profile/settings')}>
           {t('header.settings')}
         </Button>
+        <label className="flex items-center gap-1 text-xs" style={{ color: colors.textSecondary }}>
+          userId:
+          <InputNumber
+            aria-label="userId"
+            min={1}
+            precision={0}
+            size="small"
+            value={userId}
+            onChange={(value) => {
+              if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) return
+              setUserIdValue(value)
+              setUserId(String(value))
+            }}
+          />
+        </label>
       </div>
     </Header>
   )

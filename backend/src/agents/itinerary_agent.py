@@ -110,17 +110,23 @@ def _item_datetime(day: Dict[str, Any], item: Dict[str, Any]) -> Optional[dateti
     return datetime.combine(parsed_date, time(minutes // 60, minutes % 60))
 
 
-# 判断行程项是否因为状态或 current_time 进入锁定区。
-def _is_time_locked(
-    day: Dict[str, Any],
-    item: Dict[str, Any],
-    current_dt: Optional[datetime],
-) -> bool:
-    item_dt = _item_datetime(day, item)
-    return bool(current_dt and item_dt and item_dt < current_dt)
+def _duration_to_minutes(value: Any) -> Optional[int]:
+    """解析 ``3h``、``1h30min``、``2小时`` 等行程时长。"""
+    text = _as_text(value, "").strip().lower().replace(" ", "")
+    if not text:
+        return None
+
+    hours_match = re.search(r"(\d+(?:\.\d+)?)(?:h|小时|hour|hours)", text)
+    minutes_match = re.search(r"(\d+(?:\.\d+)?)(?:min|分钟|minute|minutes)", text)
+    total = 0.0
+    if hours_match:
+        total += float(hours_match.group(1)) * 60
+    if minutes_match:
+        total += float(minutes_match.group(1))
+    return max(1, round(total)) if total > 0 else None
 
 
-# 判断原始行程项是否因为状态或 current_time 进入锁定区。
+# 判断原始行程项是否因为状态进入锁定区。
 # scope 非 None 时，作用域外的未来项也视为锁定——这样 _replan_payload（给 LLM 的
 # 可编辑区）与 _merge_replan_itinerary（回填）共用这一个谓词，两侧会同时生效：
 # LLM 看不到的项，merge 时从 existing_day 原样 deepcopy 回填（image_url/cost 全保真）。
@@ -131,8 +137,6 @@ def _is_locked_item(
     scope: Optional[Dict[str, Any]] = None,
 ) -> bool:
     if item.get("status") in LOCKED_STATUSES:
-        return True
-    if _is_time_locked(day, item, current_dt):
         return True
     return scope is not None and not _in_replan_scope(day, item, scope)
 
@@ -337,7 +341,7 @@ def _replan_payload(state: TravelAgentState, scope: Optional[Dict[str, Any]] = N
         for item in ensure_list(day.get("items", []), "items"):
             if not isinstance(item, dict):
                 continue
-            if item.get("status") in LOCKED_STATUSES or _is_time_locked(day, item, current_dt):
+            if item.get("status") in LOCKED_STATUSES:
                 locked_items.append(_locked_item_summary(day, item))
             elif scope is not None and not _in_replan_scope(day, item, scope):
                 preserved_items.append(_locked_item_summary(day, item))
@@ -697,6 +701,7 @@ JSON schema:
   - interests（顶层字段，可能含 history/culture/food/nature/shopping/art/nightlife）：景点选择必须优先匹配 interests 中的类别；含 history 或 culture 时每天至少 1 个历史/文化类景点；含 nature 时每天至少 1 个自然景观；含 food 时餐食突出目的地特色；含 shopping 时安排商圈；含 art 时安排美术馆/艺术区；含 nightlife 时安排夜间活动。interests 为空则按通用推荐（历史+美食为主）。
   - lodging_mode 为 home 时，不得安排酒店、民宿或住宿费用；每日从住处出发并返回住处。否则 hotel_preference（顶层字段，economy/mid/luxury）决定住宿选址与等级。
   - local_transport（顶层字段，可能含 metro/bus/taxi/self_driving/bike/walking）：市内交通方式必须落在 local_transport 列表内，不得主推未列出的方式；在景点间移动的 tips 标注主推交通（如“地铁2号线至XX站”）。含 metro 时市内优先地铁；不含 metro 不得主推地铁。local_transport 为空则按目的地通用推荐。
+  - preferences.dietary_restriction 为 no_seafood 时，午餐、晚餐的 activity 与 tips 不得推荐、包含或建议用户自行去除海鲜、海蛎、螃蟹、虾、鱼生等食材；应直接推荐明确不含这些食材的餐食。
 - 可参考 relevant_action_logs 中的历史调整进行个性化；但当前用户需求、preferences 和 user_decision 优先级更高。
 - REPLAN 模式下，若 user_decision 存在，必须优先遵循其修改意图：
   - user_decision.action 为 "modify" 时，按 user_decision.hint 调整开放区景点/餐食/顺序（不得触碰 locked_items 与 completed/ongoing 项）；
@@ -813,9 +818,8 @@ async def _ensure_itinerary_image_urls(
 )
 def _normalize_item(raw: Any, fetched_attractions: Any = None) -> ItineraryItem:
     item = ensure_dict(raw, "itinerary item")
-    status = _as_text(item.get("status"), "upcoming")
-    if status not in {"completed", "ongoing", "upcoming"}:
-        status = "upcoming"
+    # LLM 只负责规划未来安排；实际状态由 current_time 和 duration 统一推导。
+    status = "upcoming"
 
     activity = _as_text(item.get("activity"), "待定活动")
     image_url = _as_text(item.get("image_url"))
@@ -953,8 +957,7 @@ def _enforce_initial_plan_constraints(
     return itinerary
 
 
-# 按 current_time 把"默认 upcoming 且已过去"的行程项推导为 completed。
-# 仅覆写 LLM / 规范化留下的默认 upcoming，不触碰显式设置的 completed/ongoing（硬边界）。
+# 根据 current_time、开始时间和 duration 刷新所有行程项状态。
 def _apply_time_based_status(itinerary: Any, current_dt: Optional[datetime]) -> None:
     if not current_dt:
         return
@@ -964,10 +967,16 @@ def _apply_time_based_status(itinerary: Any, current_dt: Optional[datetime]) -> 
         for item in ensure_list(day.get("items", []), "items"):
             if not isinstance(item, dict):
                 continue
-            if item.get("status") != "upcoming":
+            start_dt = _item_datetime(day, item)
+            duration_minutes = _duration_to_minutes(item.get("duration"))
+            if not start_dt or duration_minutes is None:
                 continue
-            item_dt = _item_datetime(day, item)
-            if item_dt and item_dt < current_dt:
+            end_dt = start_dt + timedelta(minutes=duration_minutes)
+            if current_dt < start_dt:
+                item["status"] = "upcoming"
+            elif current_dt < end_dt:
+                item["status"] = "ongoing"
+            else:
                 item["status"] = "completed"
 
 
@@ -1069,8 +1078,6 @@ def _merge_replan_itinerary(
         else:
             editable_items = []
             for item in generated_day.get("items", []):
-                if _is_time_locked(generated_day, item, current_dt):
-                    continue
                 if _duplicates_locked_item(generated_day, item, locked_refs):
                     continue
                 copied_item = deepcopy(item)
@@ -1106,6 +1113,13 @@ def _has_replan_editable_scope(
 async def itinerary_agent_node(state: TravelAgentState) -> Dict[str, Any]:
     mode = get_plan_mode(state)
     logger.info("Running LLM itinerary node, mode=%s", mode)
+    if mode == "replan" and get_daily_itinerary(state):
+        refreshed_itinerary = deepcopy(get_daily_itinerary(state))
+        _apply_time_based_status(
+            refreshed_itinerary,
+            _parse_current_datetime(get_current_time(state)),
+        )
+        state = {**state, "daily_itinerary": refreshed_itinerary}
     user_message = _latest_user_message(state)
     # 预算自动微调：本轮由 validator 触发，要求 LLM 自行削减行程以不超上限。
     auto_reduce = bool(state.get("auto_reduce_budget"))

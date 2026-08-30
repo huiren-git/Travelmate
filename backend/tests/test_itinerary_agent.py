@@ -1,12 +1,13 @@
 import json
 from copy import deepcopy
+from datetime import datetime
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
+from src.agents import cost_enrich as cost_enrich_module
 from src.agents import itinerary_agent as itinerary_module
 from src.agents.itinerary_agent import itinerary_agent_node
-from src.core.exceptions import AppException
 from src.graph import validator as validator_module
 from src.graph.validator import validator_node
 from src.utils.state_utils import get_start_date
@@ -90,6 +91,86 @@ def test_initial_plan_uses_tomorrow_at_nine_when_twelve_hours_remain():
     assert result[0]["items"][0]["status"] == "upcoming"
 
 
+def test_time_based_status_uses_item_duration_boundaries():
+    itinerary = [{
+        "day": 1,
+        "date": "2026-08-10",
+        "items": [
+            {"time": "16:00", "duration": "1h", "activity": "未开始", "status": "upcoming"},
+            {"time": "14:30", "duration": "1h", "activity": "进行中", "status": "upcoming"},
+            {"time": "13:00", "duration": "1h", "activity": "已结束", "status": "upcoming"},
+        ],
+    }]
+
+    itinerary_module._apply_time_based_status(
+        itinerary,
+        datetime.fromisoformat("2026-08-10T15:00:00"),
+    )
+
+    assert [item["status"] for item in itinerary[0]["items"]] == [
+        "upcoming",
+        "ongoing",
+        "completed",
+    ]
+
+
+def test_normalize_item_treats_llm_status_as_upcoming():
+    item = itinerary_module._normalize_item({
+        "time": "09:00",
+        "activity": "故宫博物院",
+        "duration": "3h",
+        "status": "completed",
+    })
+
+    assert item["status"] == "upcoming"
+
+
+@pytest.mark.asyncio
+async def test_replan_refreshes_status_before_building_editable_payload(monkeypatch):
+    state = _replan_state()
+    captured_messages = []
+
+    async def fake_retrieve(*_args, **_kwargs):
+        return []
+
+    async def fake_store(*_args, **_kwargs):
+        return None
+
+    def fake_schedule(*_args, **_kwargs):
+        return None
+
+    fake_llm = FakeJsonLLM({"daily_itinerary": [{
+        "day": 1,
+        "date": "2026-08-10",
+        "items": [{
+            "time": "16:00",
+            "activity": "北海公园散步",
+            "duration": "1h",
+            "address": "北京市西城区文津街1号",
+            "status": "upcoming",
+            "tips": "替换开放区项目",
+        }],
+    }]})
+
+    original_ainvoke = fake_llm.ainvoke
+
+    async def capture_ainvoke(messages):
+        captured_messages.extend(messages)
+        return await original_ainvoke(messages)
+
+    fake_llm.ainvoke = capture_ainvoke
+    monkeypatch.setattr(itinerary_module, "_retrieve_relevant_preferences", fake_retrieve)
+    monkeypatch.setattr(itinerary_module, "_retrieve_relevant_action_logs", fake_retrieve)
+    monkeypatch.setattr(itinerary_module, "_store_user_memory_candidates", fake_store)
+    monkeypatch.setattr(itinerary_module, "_schedule_replan_action_log", fake_schedule)
+    monkeypatch.setattr(itinerary_module, "get_itinerary_llm", lambda: fake_llm)
+
+    await itinerary_agent_node(state)
+
+    payload = json.loads(captured_messages[1].content)
+    assert {item["activity"]: item["status"] for item in payload["locked_items"]}["景山公园"] == "completed"
+
+
 @pytest.fixture(autouse=True)
 def fake_activity_image_lookup(monkeypatch):
     async def fake_fetch_activity_image_url(destination, activity):
@@ -100,6 +181,24 @@ def fake_activity_image_lookup(monkeypatch):
         "_fetch_activity_image_url",
         fake_fetch_activity_image_url,
     )
+
+    async def fake_fetch_food_pois_with_cache(*_args, **_kwargs):
+        return []
+
+    async def fake_amap_distance_km(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        cost_enrich_module,
+        "fetch_food_pois_with_cache",
+        fake_fetch_food_pois_with_cache,
+    )
+    monkeypatch.setattr(
+        cost_enrich_module,
+        "amap_distance_km",
+        fake_amap_distance_km,
+    )
+
 
 
 # 构造 REPLAN 测试使用的 State。
@@ -132,14 +231,24 @@ def _replan_state():
                         "address": "北京市东城区景山前街4号",
                         "status": "completed",
                         "tips": "已完成，不要改动",
+                        "cost": 150.0,
+                        "cost_category": "tickets",
+                        "estimate_source": "amap",
+                        "leg_transport_cost": 0.0,
+                        "image_url": "https://images.example.test/forbidden-city.jpg",
                     },
                     {
-                        "time": "12:00",
+                        "time": "14:30",
                         "activity": "午餐",
                         "duration": "1h",
                         "address": "王府井",
-                        "status": "ongoing",
-                        "tips": "正在进行，不要改动",
+                        "status": "upcoming",
+                        "tips": "状态刷新后正在进行",
+                        "cost": 190.0,
+                        "cost_category": "food",
+                        "estimate_source": "amap",
+                        "leg_transport_cost": 8.0,
+                        "image_url": "",
                     },
                     {
                         "time": "14:00",
@@ -148,6 +257,11 @@ def _replan_state():
                         "address": "北京市西城区景山西街44号",
                         "status": "upcoming",
                         "tips": "早于 current_time，也要锁定",
+                        "cost": 0.0,
+                        "cost_category": "tickets",
+                        "estimate_source": "free",
+                        "leg_transport_cost": 5.0,
+                        "image_url": "https://images.example.test/jingshan.jpg",
                     },
                     {
                         "time": "16:00",
@@ -204,11 +318,41 @@ def _patch_validator_llm(monkeypatch, payload):
     return fake_llm
 
 
-# 验证 REPLAN 模式会硬锁 completed、ongoing 和 current_time 之前的行程项。
+# 验证 REPLAN 模式不改写 completed 项；ongoing 和当前时间之前但未完成的项允许重新定价。
 @pytest.mark.asyncio
-async def test_replan_keeps_locked_items_and_only_rewrites_editable_scope(monkeypatch):
+async def test_replan_preserves_completed_items_and_reprices_non_completed_locked_items(monkeypatch):
     state = _replan_state()
     original_locked_items = deepcopy(state["daily_itinerary"][0]["items"][:3])
+
+    async def fake_retrieve_memories(*_args, **_kwargs):
+        return []
+
+    async def fake_store_memory_candidates(*_args, **_kwargs):
+        return None
+
+    def fake_schedule_replan_action_log(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        itinerary_module,
+        "_retrieve_relevant_preferences",
+        fake_retrieve_memories,
+    )
+    monkeypatch.setattr(
+        itinerary_module,
+        "_retrieve_relevant_action_logs",
+        fake_retrieve_memories,
+    )
+    monkeypatch.setattr(
+        itinerary_module,
+        "_store_user_memory_candidates",
+        fake_store_memory_candidates,
+    )
+    monkeypatch.setattr(
+        itinerary_module,
+        "_schedule_replan_action_log",
+        fake_schedule_replan_action_log,
+    )
     fake_llm = FakeJsonLLM(
         {
             "daily_itinerary": [
@@ -274,19 +418,35 @@ async def test_replan_keeps_locked_items_and_only_rewrites_editable_scope(monkey
 
     assert fake_llm.calls, "REPLAN 存在开放区时应该调用 LLM"
     assert "daily_itinerary" not in result
-    for actual, expected in zip(itinerary[0]["items"][:3], original_locked_items):
-        assert {key: value for key, value in actual.items() if key != "image_url"} == expected
-        if "午餐" in expected["activity"]:
-            assert actual["image_url"] == ""
-        else:
-            assert actual["image_url"] == "https://amap.example.com/default.jpg"
+    actual_by_activity = {item["activity"]: item for item in itinerary[0]["items"]}
+    expected_by_activity = {item["activity"]: item for item in original_locked_items}
+    completed_actual = actual_by_activity["故宫博物院"]
+    ongoing_actual = actual_by_activity["午餐"]
+    past_upcoming_actual = actual_by_activity["景山公园"]
+    completed_expected = expected_by_activity["故宫博物院"]
+    ongoing_expected = expected_by_activity["午餐"]
+    past_upcoming_expected = expected_by_activity["景山公园"]
+
+    assert completed_actual == completed_expected
+
+    assert ongoing_actual["activity"] == ongoing_expected["activity"]
+    assert ongoing_actual["status"] == "ongoing"
+    assert ongoing_actual["cost"] == 190.0
+    assert ongoing_actual["estimate_source"] == "rule"
+    assert ongoing_actual["leg_transport_cost"] == 0.0
+
+    assert past_upcoming_actual["activity"] == past_upcoming_expected["activity"]
+    assert past_upcoming_actual["status"] == "completed"
+    assert past_upcoming_actual["cost"] == past_upcoming_expected["cost"]
+    assert past_upcoming_actual["estimate_source"] == past_upcoming_expected["estimate_source"]
+    assert past_upcoming_actual["leg_transport_cost"] == past_upcoming_expected["leg_transport_cost"]
     assert [item["activity"] for item in itinerary[0]["items"]] == [
         "故宫博物院",
-        "午餐",
         "景山公园",
+        "午餐",
         "北海公园散步",
     ]
-    assert itinerary[1]["items"][0]["activity"] == "颐和园"
+    assert itinerary[1]["items"][0]["activity"] == "天坛公园"
     assert itinerary[1]["items"][0]["status"] == "upcoming"
 
     system_prompt = fake_llm.calls[0][0].content
@@ -358,6 +518,19 @@ async def test_itinerary_agent_retrieves_relevant_preferences_before_prompt(monk
     ]
     payload = json.loads(fake_llm.calls[0][1].content)
     assert payload["relevant_preferences"][0]["text"] == "用户偏好：喜欢轻松散步和历史文化景点"
+
+
+def test_itinerary_prompt_exposes_and_enforces_no_seafood_constraint():
+    state = _replan_state()
+    state["structured_preferences"] = {"dietary_restriction": "no_seafood"}
+
+    messages = itinerary_module._build_itinerary_messages(state)
+    prompt = messages[0].content
+    payload = json.loads(messages[1].content)
+
+    assert payload["preferences"]["dietary_restriction"] == "no_seafood"
+    assert "preferences.dietary_restriction" in prompt
+    assert "no_seafood" in prompt
 
 
 # 验证 Itinerary Agent 会从用户偏好和修改决策中写入长期记忆。
@@ -519,7 +692,7 @@ async def test_plan_adds_image_url_from_fetched_attractions(monkeypatch):
 
     result = await itinerary_agent_node(state)
 
-    assert result["daily_itinerary"][0]["items"][0]["image_url"] == "https://example.com/forbidden-city.jpg"
+    assert result["draft_daily_itinerary"][0]["items"][0]["image_url"] == "https://example.com/forbidden-city.jpg"
 
 
 @pytest.mark.asyncio
@@ -577,11 +750,11 @@ async def test_plan_backfills_missing_image_url_from_amap(monkeypatch):
     result = await itinerary_agent_node(state)
 
     assert lookup_calls == [("北京", "北海公园")]
-    assert result["daily_itinerary"][0]["items"][0]["image_url"] == "https://amap.example.com/beihai.jpg"
+    assert result["draft_daily_itinerary"][0]["items"][0]["image_url"] == "https://amap.example.com/beihai.jpg"
 
 
 @pytest.mark.asyncio
-async def test_plan_raises_when_missing_image_url_cannot_be_backfilled(monkeypatch):
+async def test_plan_allows_attraction_when_missing_image_url_cannot_be_backfilled(monkeypatch):
     state = _replan_state()
     state["messages"] = [HumanMessage(content="Plan a Beijing mystery trip")]
     state["daily_itinerary"] = None
@@ -630,11 +803,11 @@ async def test_plan_raises_when_missing_image_url_cannot_be_backfilled(monkeypat
     )
     monkeypatch.setattr(itinerary_module, "get_itinerary_llm", lambda: fake_llm)
 
-    with pytest.raises(AppException) as exc_info:
-        await itinerary_agent_node(state)
+    result = await itinerary_agent_node(state)
 
-    assert exc_info.value.status_code == 422
-    assert exc_info.value.details["activity"] == "不存在的幻想景点"
+    item = result["draft_daily_itinerary"][0]["items"][0]
+    assert item["activity"] == "不存在的幻想景点"
+    assert item["image_url"] == ""
 
 
 @pytest.mark.asyncio
@@ -706,7 +879,7 @@ async def test_plan_allows_meal_items_without_image_url(monkeypatch):
     monkeypatch.setattr(itinerary_module, "get_itinerary_llm", lambda: fake_llm)
 
     result = await itinerary_agent_node(state)
-    items = result["daily_itinerary"][0]["items"]
+    items = result["draft_daily_itinerary"][0]["items"]
 
     assert lookup_calls == []
     assert items[1]["activity"] == "午餐：北京烤鸭"
@@ -780,7 +953,7 @@ async def test_plan_allows_meal_time_restaurant_without_food_keyword(monkeypatch
     monkeypatch.setattr(itinerary_module, "get_itinerary_llm", lambda: fake_llm)
 
     result = await itinerary_agent_node(state)
-    items = result["daily_itinerary"][0]["items"]
+    items = result["draft_daily_itinerary"][0]["items"]
 
     assert lookup_calls == []
     assert items[1]["activity"] == "全聚德王府井店"
@@ -848,7 +1021,7 @@ async def test_plan_degrades_transport_item_without_image_url(monkeypatch):
     result = await itinerary_agent_node(state)
 
     assert lookup_calls == []
-    assert result["daily_itinerary"][0]["items"][0]["image_url"] == ""
+    assert result["draft_daily_itinerary"][0]["items"][0]["image_url"] == ""
 
 
 @pytest.mark.asyncio
@@ -910,7 +1083,7 @@ async def test_plan_degrades_dining_item_without_image_url(monkeypatch):
     result = await itinerary_agent_node(state)
 
     assert lookup_calls == []
-    assert result["daily_itinerary"][0]["items"][0]["image_url"] == ""
+    assert result["draft_daily_itinerary"][0]["items"][0]["image_url"] == ""
 
 
 # 验证 REPLAN 成功合并行程后会调度操作日志，且不会阻塞返回结果。
@@ -979,7 +1152,12 @@ async def test_replan_schedules_action_log_after_generating_itinerary(monkeypatc
     assert result["draft_daily_itinerary"][0]["items"][-1]["activity"] == "北海公园散步"
     assert len(scheduled) == 1
     assert scheduled[0]["user_message"] == "下午别去南锣鼓巷了，换一个轻松点的安排"
-    assert scheduled[0]["original_itinerary"] == state["daily_itinerary"]
+    refreshed_itinerary = deepcopy(state["daily_itinerary"])
+    itinerary_module._apply_time_based_status(
+        refreshed_itinerary,
+        itinerary_module._parse_current_datetime(state["current_time"]),
+    )
+    assert scheduled[0]["original_itinerary"] == refreshed_itinerary
     assert scheduled[0]["updated_itinerary"] == result["draft_daily_itinerary"]
 
 
@@ -989,6 +1167,10 @@ async def test_replan_returns_original_itinerary_when_everything_is_locked(monke
     state = _replan_state()
     state["current_time"] = "2026-08-12T00:00:00"
     original_itinerary = deepcopy(state["daily_itinerary"])
+    itinerary_module._apply_time_based_status(
+        original_itinerary,
+        itinerary_module._parse_current_datetime(state["current_time"]),
+    )
     fake_llm = FakeJsonLLM({"daily_itinerary": []})
     monkeypatch.setattr(itinerary_module, "get_itinerary_llm", lambda: fake_llm)
 
@@ -1071,7 +1253,7 @@ async def test_validator_rejects_itinerary_when_soft_score_below_threshold(monke
 
     assert fake_llm.calls, "硬校验通过后应调用软评估 LLM"
     assert result["validation_report"]["passed"] is False
-    assert "soft_score_below_threshold: 62 < 80" in result["validation_report"]["errors"]
+    assert "soft_score_below_threshold: 62 < 70" in result["validation_report"]["errors"]
     assert result["soft_validation_attempts"] == 1
     assert result["is_finished"] is False
     assert "daily_itinerary" not in result

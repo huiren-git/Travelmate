@@ -20,6 +20,8 @@ class ItineraryItem(TypedDict):
     # ---- 定价字段（由 cost_enrich 写入，前端展示可直接消费）----
     cost: Optional[float]           # 该项实际花费（已含 travelers 倍数）
     cost_category: Optional[Literal["transport", "hotel", "food", "tickets", "other"]]
+    estimate_source: Optional[Literal["amap", "rule", "free", "pending"]]
+    # 费用来源：高德 POI、规则估算、免费或待估算
     poi_ref: Optional[str]          # 命中的 POI 名称/ID，用于精确匹配与前端跳转
     location: Optional[str]         # "lng,lat"，供方法2 计算相邻 item 距离
     leg_transport_cost: Optional[float]  # 到达该 item 的交通腿费（方法2）

@@ -245,6 +245,18 @@ export function useChatPageState() {
         const restored = messagesFromBlackboard(threadId, blackboard)
         setMessagesByConversationId((current) => ({ ...current, [threadId]: restored }))
 
+        for (const task of snapshot.state.task_list) {
+          if (!isRecord(task) || !Array.isArray(task.interrupts)) continue
+          for (const interrupt of task.interrupts) {
+            if (!isRecord(interrupt)) continue
+            const value = isRecord(interrupt.value) ? interrupt.value : null
+            if (value?.type === 'budget_overrun') {
+              setPendingInterrupt(value as BudgetInterruptPayload)
+              break
+            }
+          }
+        }
+
         // 同步恢复右侧行程面板
         const tripPlan = adaptGeneratedTripPlan({ values: blackboard })
         if (tripPlan) {
