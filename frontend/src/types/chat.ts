@@ -1,4 +1,4 @@
-export type ConversationStatus = '进行中' | '已完成'
+export type ConversationStatus = '进行中' | '已完成' | '已停止'
 
 export type ItineraryStatus = '已确认' | '待确认' | '已完成'
 

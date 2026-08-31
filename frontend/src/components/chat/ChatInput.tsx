@@ -1,4 +1,4 @@
-import { ArrowUpOutlined, UnorderedListOutlined } from '@ant-design/icons'
+import { ArrowUpOutlined, StopOutlined, UnorderedListOutlined } from '@ant-design/icons'
 import { Badge, Button, Checkbox, Form, Input, InputNumber, Modal, Radio, Select, Tooltip } from 'antd'
 import { useState } from 'react'
 import type { StructuredPreferences } from '../../types/chat'
@@ -11,6 +11,9 @@ type ChatInputProps = {
   draft: string
   onDraftChange: (value: string) => void
   onSend: () => void
+  onStop: () => void
+  isStreaming: boolean
+  isStopping: boolean
   onStructuredPreferencesChange: (preferences: StructuredPreferences | undefined) => void
   structuredPreferences: StructuredPreferences | undefined
 }
@@ -49,6 +52,9 @@ export function ChatInput({
   draft,
   onDraftChange,
   onSend,
+  onStop,
+  isStreaming,
+  isStopping,
   onStructuredPreferencesChange,
   structuredPreferences,
 }: ChatInputProps) {
@@ -97,14 +103,16 @@ export function ChatInput({
             </Tooltip>
           </div>
           <div className="absolute bottom-3 right-3">
-            <Tooltip title={t('chat.sendTooltip')}>
+            <Tooltip title={isStreaming ? '停止生成' : t('chat.sendTooltip')}>
               <Button
+                danger={isStreaming}
                 type="primary"
                 shape="circle"
-                icon={<ArrowUpOutlined />}
-                onClick={onSend}
+                icon={isStreaming ? <StopOutlined /> : <ArrowUpOutlined />}
+                onClick={isStreaming ? onStop : onSend}
+                disabled={isStopping}
                 className="flex h-10 w-10 items-center justify-center border-0 shadow-md transition-transform active:scale-95"
-                style={{ background: accentColor }}
+                style={isStreaming ? undefined : { background: accentColor }}
               />
             </Tooltip>
           </div>

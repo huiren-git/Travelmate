@@ -352,6 +352,8 @@ async def _run_graph(
                 break
 
             # 3. 将节点更新放入队列（SSE 会消费）
+            run.partial_tokens += _estimate_tokens(update)
+            run.has_partial_result = True
             await run.queue.put(("node", update))
 
         # 4. 获取最终状态快照（用于 "done" 事件）
@@ -521,6 +523,13 @@ async def stop_chat(
     run.stop_requested = True
     if run.task and not run.task.done():
         run.task.cancel()
+        try:
+            await run.task
+        except asyncio.CancelledError:
+            # _run_graph 会自行把 Trace 收尾为 cancelled；这里仅兼容任务尚未开始时的竞态。
+            await end_trace(run.trace_id, status="cancelled")
+            await run.queue.put(("stopped", {"trace_id": run.trace_id}))
+            await run.queue.put(("close", None))
 
     return ApiResponse(
         code=200,

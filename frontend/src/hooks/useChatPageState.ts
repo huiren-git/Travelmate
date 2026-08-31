@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { confirmLogistics, createChatThreadId, resumeChat, streamChat, type BudgetInterruptPayload, type ParsedSseEvent } from '../api/chat'
+import { confirmLogistics, createChatThreadId, resumeChat, stopChat, streamChat, type BudgetInterruptPayload, type ParsedSseEvent } from '../api/chat'
 import { fetchSessionSnapshot, fetchSessions, mapSessionItemsToConversations, type SessionSnapshotBlackboard } from '../api/sessions'
 import type { ChatMessage, Conversation, GeneratedTripPlan, StructuredPreferences } from '../types/chat'
 import { adaptGeneratedTripPlan } from '../utils/chatPlanAdapter'
@@ -172,6 +172,8 @@ export function useChatPageState() {
   const [structuredPreferences, setStructuredPreferences] = useState<StructuredPreferences>()
   const [isNewTripMode, setIsNewTripMode] = useState(false)
   const [isStreaming, setIsStreaming] = useState(false)
+  const [isStopping, setIsStopping] = useState(false)
+  const activeStreamControllerRef = useRef<AbortController | null>(null)
   const [emptyTripPlanConversationIds, setEmptyTripPlanConversationIds] = useState<Set<string>>(() => new Set())
   const [generatedTripPlansByConversationId, setGeneratedTripPlansByConversationId] = useState<
     Record<string, GeneratedTripPlan>
@@ -379,6 +381,8 @@ export function useChatPageState() {
     }))
 
     setIsStreaming(true)
+    const controller = new AbortController()
+    activeStreamControllerRef.current = controller
     try {
       await streamChat(
         {
@@ -420,8 +424,10 @@ export function useChatPageState() {
             ),
           }))
         },
+        controller.signal,
       )
     } catch (error) {
+      if (controller.signal.aborted) return
       const errorMessage = error instanceof Error ? error.message : '请求失败，请稍后重试。'
       setMessagesByConversationId((current) => ({
         ...current,
@@ -430,7 +436,36 @@ export function useChatPageState() {
         ),
       }))
     } finally {
+      if (activeStreamControllerRef.current === controller) {
+        activeStreamControllerRef.current = null
+      }
       setIsStreaming(false)
+    }
+  }
+
+  async function stopMessage() {
+    if (!isStreaming || isStopping) return
+
+    setIsStopping(true)
+    try {
+      await stopChat(activeConversationId)
+      activeStreamControllerRef.current?.abort()
+      setConversationList((current) => current.map((conversation) =>
+        conversation.id === activeConversationId
+          ? { ...conversation, status: '已停止', updatedAt: formatConversationUpdatedAt() }
+          : conversation,
+      ))
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '停止生成失败，请重试。'
+      setMessagesByConversationId((current) => ({
+        ...current,
+        [activeConversationId]: [
+          ...(current[activeConversationId] ?? []),
+          { id: `m-stop-error-${Date.now()}`, role: 'assistant', content: errorMessage, time: formatMessageTime() },
+        ],
+      }))
+    } finally {
+      setIsStopping(false)
     }
   }
 
@@ -517,6 +552,7 @@ export function useChatPageState() {
     expensesByCategory: displayExpensesByCategory,
     isNewTripMode,
     isStreaming,
+    isStopping,
     isTripPlanEmpty,
     isLoadingConversations,
     messages,
@@ -529,6 +565,7 @@ export function useChatPageState() {
     setSiderCollapsed,
     setStructuredPreferences,
     sendMessage,
+    stopMessage,
     resolveInterrupt,
     pendingInterrupt,
     showNewTripEmptyState,

@@ -27,6 +27,7 @@ export function ChatLayout({
   isLoadingConversations,
   isTripPlanEmpty,
   isStreaming,
+  isStopping,
   itinerary,
   logistics,
   confirmLogisticsItem,
@@ -41,6 +42,7 @@ export function ChatLayout({
   setSiderCollapsed,
   setStructuredPreferences,
   sendMessage,
+  stopMessage,
   resolveInterrupt,
   showNewTripEmptyState,
   startNewTrip,
@@ -91,6 +93,9 @@ export function ChatLayout({
           draft={draft}
           onDraftChange={setDraft}
           onSend={sendMessage}
+          onStop={stopMessage}
+          isStreaming={isStreaming}
+          isStopping={isStopping}
           onStructuredPreferencesChange={setStructuredPreferences}
           structuredPreferences={structuredPreferences}
         />

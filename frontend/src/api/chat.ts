@@ -104,7 +104,11 @@ function parseSseMessages(text: string): ParseSseResult {
   return { events, rest }
 }
 
-export async function streamChat(request: ChatStreamRequest, onEvent: (event: ParsedSseEvent) => void | Promise<void>) {
+export async function streamChat(
+  request: ChatStreamRequest,
+  onEvent: (event: ParsedSseEvent) => void | Promise<void>,
+  signal?: AbortSignal,
+) {
   const response = await fetch(`${API_BASE_URL}/chat/stream`, {
     method: 'POST',
     headers: {
@@ -112,6 +116,7 @@ export async function streamChat(request: ChatStreamRequest, onEvent: (event: Pa
       'X-User-Id': USER_ID,
     },
     body: JSON.stringify(request),
+    signal,
   })
 
   if (!response.ok) {
@@ -148,6 +153,18 @@ export async function streamChat(request: ChatStreamRequest, onEvent: (event: Pa
   } finally {
     reader.releaseLock()
   }
+}
+
+export async function stopChat(threadId: string) {
+  const response = await fetch(`${API_BASE_URL}/chat/stop/${encodeURIComponent(threadId)}`, {
+    method: 'POST',
+    headers: { 'X-User-Id': USER_ID },
+  })
+  if (!response.ok) {
+    const message = await response.text()
+    throw new Error(message || response.statusText || 'Stop request failed')
+  }
+  return response.json() as Promise<{ code: number; data?: unknown }>
 }
 
 // 恢复处于 LangGraph interrupt 状态的会话并返回后续 SSE 流（人机协同：用户确认超支等）。

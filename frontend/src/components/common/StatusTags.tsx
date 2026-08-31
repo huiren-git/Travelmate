@@ -18,6 +18,14 @@ export function ConversationStatusTag({ status }: ConversationStatusTagProps) {
     )
   }
 
+  if (status === '已停止') {
+    return (
+      <Tag color="default" className="m-0 rounded-full border-0 bg-amber-50 text-amber-600 font-normal">
+        已停止
+      </Tag>
+    )
+  }
+
   return (
     <Tag color="default" className="m-0 rounded-full border-0 bg-slate-100 text-slate-500 font-normal">
       已完成

@@ -41,6 +41,8 @@ class FakeGraph:
         self.stream_inputs: list[Any] = []
         self.started = asyncio.Event()
         self.block = False
+        self.pause_after_first_update = False
+        self.first_update_emitted = asyncio.Event()
 
     async def aupdate_state(self, config: dict[str, Any], values: dict[str, Any]):
         thread_id = config["configurable"]["thread_id"]
@@ -65,6 +67,9 @@ class FakeGraph:
 
         yield {"itinerary_agent": {"daily_itinerary": [{"day": 1}]}}
         current_values = self.snapshots.get(thread_id, FakeSnapshot(values={})).values
+        self.first_update_emitted.set()
+        if self.pause_after_first_update:
+            await asyncio.Event().wait()
         self.snapshots[thread_id] = FakeSnapshot(
             values={
                 **current_values,
@@ -189,6 +194,40 @@ async def test_stop_chat_cancels_active_run(monkeypatch):
     assert result.code == 200
     assert result.data.thread_id == "thread-stop"
     assert "event: stopped" in body
+
+
+@pytest.mark.asyncio
+async def test_stop_chat_marks_trace_cancelled_and_preserves_emitted_result(monkeypatch):
+    """Stopping after a node update must retain that update and finish the trace as cancelled."""
+    graph = FakeGraph()
+    graph.pause_after_first_update = True
+    ended: list[tuple[str, str]] = []
+
+    async def fake_get_graph():
+        return graph
+
+    async def fake_end_trace(trace_id, status, error_msg=None):
+        ended.append((trace_id, status))
+
+    monkeypatch.setattr(chat_api, "_get_graph", fake_get_graph)
+    monkeypatch.setattr(chat_api, "end_trace", fake_end_trace)
+
+    response = await chat_api.chat_stream(
+        ChatStreamRequest(thread_id="thread-partial-stop", message="帮我设计一个北京3日游"),
+        user_id="user-1",
+    )
+    await asyncio.wait_for(graph.first_update_emitted.wait(), timeout=1)
+
+    result = await chat_api.stop_chat("thread-partial-stop", user_id="user-1")
+    chunks = [chunk async for chunk in response.body_iterator]
+    body = "".join(chunk.decode() if isinstance(chunk, bytes) else chunk for chunk in chunks)
+
+    assert result.data.has_partial_result is True
+    assert result.data.partial_tokens > 0
+    assert "event: node" in body
+    assert "event: stopped" in body
+    assert len(ended) == 1
+    assert ended[0][1] == "cancelled"
 
 
 # 验证 resume 接口只接受处于 LangGraph interrupt 状态的会话。
