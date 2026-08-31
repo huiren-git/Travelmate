@@ -53,6 +53,14 @@ UI设计/
 docs/
 .workbuddy/
 
+# Local runtime data, work logs, and implementation notes inside applications
+backend/docs/
+backend/.workbuddy/
+backend/data/
+frontend/docs/
+frontend/.workbuddy/
+frontend/data/
+
 # Runtime databases and local state
 *.db
 *.sqlite
