@@ -47,6 +47,11 @@ npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
 
+# Local design and reference documentation (kept locally, not versioned)
+api说明书/
+UI设计/
+docs/
+
 # Runtime databases and local state
 *.db
 *.sqlite

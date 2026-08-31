@@ -129,4 +129,4 @@ node --test tests/chatStop.test.mjs tests/reference.test.mjs
 npm run build
 ```
 
-完整用例设计、质量门槛和实测结果见 [docs/TravelMate-测试用例设计书.md](docs/TravelMate-测试用例设计书.md)。覆盖功能正确性、Agent 质量、性能成本和鲁棒性四个维度；真实模型基准脚本位于 `backend/benchmarks/`。
+完整用例设计、质量门槛和实测结果覆盖功能正确性、Agent 质量、性能成本和鲁棒性四个维度；真实模型基准脚本位于 `backend/benchmarks/`。相关内部文档保留在本地 `docs/`，不随远程仓库发布。
