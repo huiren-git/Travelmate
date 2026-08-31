@@ -51,6 +51,7 @@ pnpm-debug.log*
 api说明书/
 UI设计/
 docs/
+.workbuddy/
 
 # Runtime databases and local state
 *.db
